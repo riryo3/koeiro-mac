@@ -704,14 +704,25 @@ class MainWindow(QMainWindow):
         self.band_advanced = Band('③', '詳細', '必要なときだけ使う調整です。', glyph='🔧 ')
         convert_cards = [self.band_convert.body.itemAt(i).widget()
                          for i in range(self.band_convert.body.count())]
-        advanced_titles = ('声の加工', '声の微調整', '抑揚補正', 'AI出力のフォルマント')
+        advanced_titles = ('声の加工', '声の微調整', '抑揚補正')
+        self._cards = {}
         for card in convert_cards:
             if card is None or isinstance(card, QPushButton):
                 continue
             titles = [l.text() for l in card.findChildren(QLabel)
                       if l.objectName() in ('sectionTitle', 'stepTitle')]
-            if titles and any(titles[0].startswith(t) for t in advanced_titles):
+            heading = titles[0] if titles else ''
+            for key in ('声の加工', '声の微調整', '抑揚補正', 'AI出力のフォルマント', '出力の仕上げ'):
+                if heading.startswith(key):
+                    self._cards[key] = card
+            if heading and any(heading.startswith(t) for t in advanced_titles):
                 self.band_advanced.body.addWidget(card)
+        # The AI formant lift belongs next to the voice choice, ahead of the output finish.
+        formant, finish = self._cards.get('AI出力のフォルマント'), self._cards.get('出力の仕上げ')
+        if formant is not None and finish is not None:
+            self.band_convert.body.removeWidget(formant)
+            self.band_convert.body.insertWidget(self.band_convert.body.indexOf(finish), formant)
+        self._apply_card_visibility()
         self.band_advanced.body.addWidget(self.nameplate, 0, Qt.AlignmentFlag.AlignRight)
         columns = QWidget()
         row = QHBoxLayout(columns)
@@ -2779,7 +2790,8 @@ class MainWindow(QMainWindow):
         """Keep the pitch explanation in step with the selected mode."""
         if hasattr(self, 'pitch_note'):
             self._update_pitch_note()
-        self._update_orb(self.controller.snapshot)
+        # (was self._update_orb, a method that no longer exists: it raised on every mode change)
+        self._update_stage(self.controller.snapshot)
         if hasattr(self, 'output_card_text'):
             self.output_card_text.setText('現在の設定: ' + self._describe_output()
                                            if self.controller.engine.running
@@ -3215,6 +3227,31 @@ class MainWindow(QMainWindow):
         self.prosody_tab.setVisible(not mean)
         self.prosody_advanced_box.setVisible(not mean)
         self.prosody_fixed_note.setVisible(mean)
+        self._apply_card_visibility()
+
+    def _apply_card_visibility(self):
+        """Show only the cards that act on the current conversion mode.
+
+        A card for a route that is not running used to sit there with a warning;
+        now it is simply not shown (Female DSP page in AI mode, the AI-only cards in
+        Female DSP / Original mode, prosody when every voice is MeanVC2).
+        """
+        cards = getattr(self, '_cards', None)
+        if not cards or not hasattr(self, 'mode'):
+            return
+        mode = self.mode.currentData()
+        ai_mode = mode == 'ai_voice'
+        mean = is_meanvc2(self.ai_model.currentData())
+        visible = {'声の加工': mode == 'female_dsp',
+                   'AI出力のフォルマント': ai_mode,
+                   '声の微調整': ai_mode,
+                   '抑揚補正': ai_mode and not mean,
+                   '出力の仕上げ': mode != 'original'}
+        for key, show in visible.items():
+            if key in cards:
+                cards[key].setVisible(show)
+        if hasattr(self, 'out_gate'):
+            self._container(self.out_gate).setVisible(ai_mode)
 
     def _monitor_toggled(self, active):
         """Remember the switch and apply it live, without a Stop/Start cycle."""
