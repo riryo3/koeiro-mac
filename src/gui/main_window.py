@@ -3398,7 +3398,7 @@ class MainWindow(QMainWindow):
         self.monitor_volume_label.setText(f'{self.monitor_volume.value()/10:+.1f} dB')
         device = self.monitor_device.currentData()
         output = self.output_device.currentData() if hasattr(self, 'output_device') else None
-        self.audio_midi_button.setVisible(False)
+        show_midi = False
         if device is None:
             self.monitor_warning.setText('モニターに使える出力デバイスがありません。')
         elif output is not None and device.identity == output.identity:
@@ -3408,9 +3408,13 @@ class MainWindow(QMainWindow):
               and device.identity == self.input_device.currentData().identity):
             self.monitor_warning.setText('ℹ マイク入力と同じデバイスです。このデバイスが48kHz以外だと、Macでは'
                                          '変換中に入力が止まります（Audio MIDI設定で48kHzに）。')
-            self.audio_midi_button.setVisible(True)
+            show_midi = True
         else:
             self.monitor_warning.setText('')
+        # This runs on every UI tick (~30 ms). Hiding and re-showing the button each time
+        # rebuilt it under the pointer, so a press never completed (hover looked fine).
+        if self.audio_midi_button.isHidden() == show_midi:
+            self.audio_midi_button.setVisible(show_midi)
         self.monitor_volume.setEnabled(device is not None)
         self.monitor_test.setEnabled(device is not None and not self._monitor_test_busy)
 
@@ -3966,8 +3970,6 @@ class MainWindow(QMainWindow):
                 "（多少は仕様です。ヘッドホン推奨）")
         elif engine.monitor_error:
             self.monitor_note.setText(f"Monitorを開始できませんでした：{engine.monitor_error}")
-            if 'Audio MIDI' in engine.monitor_error:
-                self.audio_midi_button.setVisible(True)
         elif self.monitor_toggle.isChecked() and self.controller.engine.running:
             self.monitor_note.setText('Monitorを開始しています…')
         else:
