@@ -874,6 +874,13 @@ class MainWindow(QMainWindow):
         """Open macOS's Audio MIDI Setup, where a device's sample rate is changed."""
         from PySide6.QtCore import QProcess
         QProcess.startDetached('open', ['-a', 'Audio MIDI Setup'])
+        # The app keeps running with its window closed (it reopens in the state it was
+        # quit in), so "open" alone can show nothing. A reopen event, the same one a Dock
+        # click sends, brings the Audio Devices window up.
+        QTimer.singleShot(1200, lambda: QProcess.startDetached(
+            'osascript', ['-e', 'tell application "Audio MIDI Setup" to reopen']))
+        self.monitor_note.setText('Audio MIDI設定を開きました。窓が出ないときは、メニューの'
+                                  '「ウインドウ → オーディオ装置を表示」を選んでください。')
 
     def _show_about(self):
         """Credits: the original project, its license and the models this app builds on."""
