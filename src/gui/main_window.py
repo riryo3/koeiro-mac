@@ -9,7 +9,7 @@ import sys
 import time
 
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QCursor
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFormLayout, QHBoxLayout,
                                QCheckBox, QFrame, QLabel, QLayout, QLineEdit, QMainWindow, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSlider,
@@ -193,6 +193,7 @@ class MainWindow(QMainWindow):
 
         body = QWidget()
         self._body = body
+        QApplication.instance().installEventFilter(self)
         body_row = QHBoxLayout(body)
         self._body_row = body_row
         body_row.setContentsMargins(0, 0, 0, 0)
@@ -1198,6 +1199,18 @@ class MainWindow(QMainWindow):
         # An explicit choice wins over the automatic fold on a narrow window.
         self._voice_user_choice = checked
         self._toggle_voice_panel(collapsed=not checked)
+
+    def eventFilter(self, watched, event):
+        """A tooltip belongs to the widget under the pointer; drop any other one.
+
+        After a menu closes or the style is re-applied, Qt can raise tooltips for widgets
+        the pointer is nowhere near (and macOS leaves them up).
+        """
+        if event.type() == QEvent.Type.ToolTip and isinstance(watched, QWidget):
+            under = QApplication.widgetAt(QCursor.pos())
+            if under is None or not (under is watched or watched.isAncestorOf(under)):
+                return True
+        return super().eventFilter(watched, event)
 
     def _close_voice_panel(self):
         self._voice_user_choice = False if not self._voice_floating else self._voice_user_choice

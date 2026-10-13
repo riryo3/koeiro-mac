@@ -320,7 +320,9 @@ class MeterStrip(QWidget):
         hovered = self._gate_at(event.position().toPoint())
         hovering = hovered is not None
         self.setCursor(Qt.CursorShape.SizeVerCursor if hovering else Qt.CursorShape.ArrowCursor)
-        if hovering and hovered != self._hint_shown:
+        from PySide6.QtGui import QCursor
+        if hovering and hovered != self._hint_shown and self.rect().contains(
+                self.mapFromGlobal(QCursor.pos())):
             from PySide6.QtWidgets import QToolTip
             QToolTip.showText(event.globalPosition().toPoint(), (
                 '入力ゲート: これより小さい音は、変換に送りません。\n'
