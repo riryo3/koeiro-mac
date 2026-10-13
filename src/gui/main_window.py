@@ -699,7 +699,7 @@ class MainWindow(QMainWindow):
 
     def _sync_reset_buttons(self):
         """Each おすすめ button follows its slider: grey when locked or already at default."""
-        for slider in getattr(self, '_slider_defaults', []):
+        for slider in getattr(self, '_slider_defaults_all', getattr(self, '_slider_defaults', [])):
             slider.reset_button.setEnabled(slider.isEnabled() and slider.value() != slider.default_value)
 
     def _build_settings_columns(self):
@@ -764,8 +764,8 @@ class MainWindow(QMainWindow):
                 note.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.refresh.setFixedHeight(slot_height)
         self.reset_all_button.setFixedHeight(slot_height)
-        # ③ has one recommended-settings button for its cards (Female DSP / AI fine
-        # tuning), so the per-slider ones and the in-card buttons are hidden below.
+        # ③ has a column-wide recommended-settings button on top; the per-slider ones stay
+        # too, like in ① and ②. The in-card buttons that did the same job are hidden.
         self.advanced_reset = QPushButton('この列をおすすめ設定にする')
         self.advanced_reset.setFixedHeight(slot_height)
         self.advanced_reset.clicked.connect(self._reset_advanced)
@@ -775,9 +775,10 @@ class MainWindow(QMainWindow):
                      'tune_floor', 'tune_excess', 'tune_mid', 'tune_match', 'tune_ptrans',
                      'tune_pcap', 'tune_level')
         self._adv_sliders = [getattr(self, n) for n in adv_names if hasattr(self, n)]
-        for slider in self._adv_sliders:
-            slider.reset_button.setVisible(False)
-        self._slider_defaults = [x for x in getattr(self, '_slider_defaults', [])
+        # The "all sliders" button of ② covers ① and ② only; ③ has its own button on top.
+        # Every slider (③ included) still follows its own enabled state.
+        self._slider_defaults_all = list(getattr(self, '_slider_defaults', []))
+        self._slider_defaults = [x for x in self._slider_defaults_all
                                  if x not in self._adv_sliders]
         for widget in (self.ai_natural, self.tune_reset):
             widget.setVisible(False)
