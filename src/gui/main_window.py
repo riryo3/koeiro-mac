@@ -1198,6 +1198,9 @@ class MainWindow(QMainWindow):
         self._toggle_voice_panel(collapsed=True)
 
     def _open_voice_panel(self):
+        if self._voice_floating and self.voice_panel.isVisible():
+            self._toggle_voice_panel(collapsed=True)
+            return
         if not self._voice_floating:
             self._voice_user_choice = True
         self._toggle_voice_panel(collapsed=False)
@@ -1219,10 +1222,14 @@ class MainWindow(QMainWindow):
             self._voice_floating = False
             panel.setVisible(self._voice_wanted)
         if self._voice_floating:
-            panel.setGeometry(body.width() - panel.width(), 0, panel.width(), body.height())
+            panel.setGeometry(body.width() - self.voice_tab.width() - panel.width(), 0, panel.width(), body.height())
             if panel.isVisible():
                 panel.raise_()
-        self.voice_tab.setVisible(not panel.isVisible())
+        # Floating: the strip stays put so the stage never shifts when the list opens or closes.
+        self.voice_tab.setVisible(self._voice_floating or not panel.isVisible())
+        arrow = '›' if panel.isVisible() else '‹'
+        self.voice_tab.setText(f'{arrow}\n\n声\nリ\nス\nト\n\n{arrow}')
+        self.voice_tab.setToolTip('声リストを閉じる' if panel.isVisible() else '声リストを開く')
 
     def _auto_fold_voice_list(self):
         """A narrow window (small laptop) folds the voice list unless the user chose."""
