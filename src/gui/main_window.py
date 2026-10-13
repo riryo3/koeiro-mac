@@ -423,18 +423,18 @@ class MainWindow(QMainWindow):
         # The voice list: right-hand, and foldable to zero width.
         self.voice_panel = VoicePanel()
         self.voice_panel.closeRequested.connect(self._close_voice_panel)
-        self.voice_tab = QPushButton('‹\n声\nリ\nス\nト', body)
-        self.voice_tab.setFixedSize(26, 120)
+        self.voice_tab = QPushButton('‹\n\n声\nリ\nス\nト\n\n‹')
+        self.voice_tab.setFixedWidth(26)
+        self.voice_tab.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self.voice_tab.setCursor(Qt.CursorShape.PointingHandCursor)
         self.voice_tab.setToolTip('声リストを開く')
         self.voice_tab.setStyleSheet(
-            'QPushButton { border: 1px solid rgba(128,128,128,0.5); border-right: none; '
-            'border-top-left-radius: 10px; border-bottom-left-radius: 10px; font-size: 12px; '
-            'background: palette(window); }'
-            'QPushButton:hover { background: palette(midlight); }')
+            'QPushButton { border: none; border-left: 1px solid rgba(128,128,128,0.35); '
+            'border-radius: 0; font-size: 12px; background: transparent; }'
+            'QPushButton:hover { background: rgba(128,128,128,0.2); }')
         self.voice_tab.clicked.connect(self._open_voice_panel)
-        self.voice_tab.hide()
         body_row.addWidget(self.voice_panel)
+        body_row.addWidget(self.voice_tab)
         shell.set_appearance(self._effective_dark())
         shell.set_theme(self.settings.theme_color)
         self.setStyleSheet(stylesheet(Path(__file__).parent/'assets'))
@@ -1222,11 +1222,7 @@ class MainWindow(QMainWindow):
             panel.setGeometry(body.width() - panel.width(), 0, panel.width(), body.height())
             if panel.isVisible():
                 panel.raise_()
-        tab = self.voice_tab
-        tab.setVisible(self._voice_floating and not panel.isVisible())
-        if tab.isVisible():
-            tab.move(body.width() - tab.width(), max(0, (body.height() - tab.height()) // 3))
-            tab.raise_()
+        self.voice_tab.setVisible(not panel.isVisible())
 
     def _auto_fold_voice_list(self):
         """A narrow window (small laptop) folds the voice list unless the user chose."""
