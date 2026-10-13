@@ -63,7 +63,7 @@ class TutorialOverlay(QWidget):
     """
 
     finished = Signal(bool)
-    CARD_WIDTH = 330
+    CARD_WIDTH = 380
     MARGIN = 18
     RING = 3
     PAD = 6
@@ -92,11 +92,12 @@ class TutorialOverlay(QWidget):
         self.body.setTextFormat(Qt.TextFormat.PlainText)
         column.addWidget(self.title)
         column.addWidget(self.body)
-        foot = QHBoxLayout()
-        foot.setSpacing(8)
         self.position = QLabel()
         self.position.setObjectName('muted')
-        foot.addWidget(self.position)
+        self.position.setWordWrap(True)
+        column.addWidget(self.position)   # its own line: beside the buttons it was cut off
+        foot = QHBoxLayout()
+        foot.setSpacing(8)
         foot.addStretch(1)
         self.back_button = QPushButton('戻る')
         self.back_button.setObjectName('guideBack')
@@ -224,6 +225,10 @@ class TutorialOverlay(QWidget):
             rect = QRect(self.mapFromGlobal(target.mapToGlobal(QPoint(0, 0))), target.size())
         self._target_rect = rect
         card = self.card
+        # A word-wrapped label only reports its real height for a given width, so ask the
+        # layout for the height at the card's width; adjustSize() alone left the last
+        # lines of the text cut off.
+        card.setFixedHeight(card.layout().totalHeightForWidth(card.width()))
         card.adjustSize()
         # The card's width is fixed, so its laid-out width is the one to keep clear of
         # the lit rectangle; the hint can be narrower and would overlap it.
