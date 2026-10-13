@@ -564,9 +564,9 @@ class MainWindow(QMainWindow):
         mode_row.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         mode_row.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         self.mode = QComboBox()
-        self.mode.addItem('Original / 変換なし', 'original')
-        self.mode.addItem('Female DSP / 軽い加工', 'female_dsp')
-        self.mode.addItem('AI Voice / 声の変換', 'ai_voice')
+        self.mode.addItem('Original / 変換なし　　　⌘1', 'original')
+        self.mode.addItem('Female DSP / 軽い加工　⌘2', 'female_dsp')
+        self.mode.addItem('AI Voice / 声の変換　　⌘3', 'ai_voice')
         # 同時通訳 is hidden in this build: upstream has no translation step yet (it reads
         # the recognised Japanese text with an English voice). Re-add the item to bring it back:
         # self.mode.addItem('同時通訳 / English voice', 'translate')
@@ -577,11 +577,7 @@ class MainWindow(QMainWindow):
                           '同時通訳: 日本語の発話を英語音声に変えて出力します（実験室②が必要）')
         self.mode.setMinimumHeight(34)
         self.mode.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        mode_caption = QLabel('変換モード　<span style="font-size:11px; color:gray;">'
-                              '⌘1〜3で切り替え</span>')
-        mode_caption.setTextFormat(Qt.TextFormat.RichText)
-        mode_caption.setWordWrap(True)
-        mode_row.addRow(mode_caption, self.mode)
+        mode_row.addRow('変換モード', self.mode)
         self.voice_quick = QComboBox()
         self.voice_quick.setMinimumHeight(34)
         self.voice_quick.setToolTip('変換先の声です。右の声リストと同じ選択を共有します。')
@@ -4515,7 +4511,7 @@ class MainWindow(QMainWindow):
             if ai.get('delivery')=='utterance' and fallback:fallback=' · 発話出力は無音'
             self.ai_status.setText(f"AI Status: {ai['status']}{fallback}\n{ai['error']}")
             health = (realtime_health(ai,callback_stats,1000*self.buffer.currentData()/self.rate.currentData())
-                      if self.mode.currentData()=='ai_voice' else self.mode.currentText())
+                      if self.mode.currentData()=='ai_voice' else self.mode.currentText().split('　')[0])
             prosody=ai['prosody']
             self.health.setText('Realtime Health: '+health+' · '+prosody['health'])
             # Progress belongs to a live run: while stopped this line would claim a
