@@ -695,6 +695,13 @@ class MainWindow(QMainWindow):
     def _build_settings_columns(self):
         """配線 / 変換 / アプリ as three side-by-side columns, each scrolling alone."""
         from .shell import Band
+        # The refresh covers every device list (mic, output, monitor), so it sits at the
+        # top of the 配線 column like the all-sliders button does in 変換.
+        self.band_wire.body.removeWidget(self.refresh)
+        self.refresh.setText('デバイス一覧を更新（マイク・出力先・モニター）')
+        self.refresh.setToolTip('マイク・出力先・モニターの一覧を読み直します。'
+                                'デバイスをつないだ・外したあとに押してください。')
+        self.band_wire.body.insertWidget(0, self.refresh)
         # Cards that used to fill the アプリ column now open from the menu bar. They stay
         # alive (the tick updates their widgets) but are shown only inside a dialog.
         app_cards = [self.band_app.body.itemAt(i).widget()
