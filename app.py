@@ -31,7 +31,7 @@ def main():
     if args.apply_update:
         from src.update_swap import main as apply_update
         return apply_update(args.apply_update)
-    if sys.platform not in ("win32", "linux"):
+    if sys.platform not in ("win32", "linux", "darwin"):
         parser.error("This build supports Windows 10/11 and Linux only")
     # Reduce pure-Python GIL scheduling stalls relative to a 5.33 ms deadline.
     # This changes only this app process, not Windows or other applications.

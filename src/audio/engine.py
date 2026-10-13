@@ -161,6 +161,22 @@ class AudioEngine:
             self.stop()
             raise AudioEngineError(f"開始できません。デバイス・マイク権限・形式を確認してください。\n{error}") from error
 
+    def monitor_conflicts_with_input(self, device, rate=None):
+        """True on macOS when `device` is the live input and runs at another rate.
+
+        Verified: the same device at the same rate (e.g. 48 kHz set in Audio MIDI
+        Setup) works; at a different rate the main stream stops (PaMacCore -50).
+        """
+        if sys.platform != "darwin" or self.config is None:
+            return False
+        if device.index != self.config.input_device.index:
+            return False
+        try:
+            native = float(self.backend.query_devices(device.index)["default_samplerate"])
+        except Exception:
+            return True
+        return abs(native - float(rate or self.config.sample_rate)) > 1.0
+
     def start_monitor(self, device):
         """Start (or restart) the best-effort monitor on a running engine.
 
@@ -170,6 +186,15 @@ class AudioEngine:
         """
         self.stop_monitor()
         if not self.running or self.config is None or device is None:
+            return False
+        if self.monitor_conflicts_with_input(device):
+            # Core Audio: opening a second stream on the device that is already the
+            # live input at another sample rate stops the main stream.
+            self.monitor_player = None
+            self.monitor_error = (f"モニターが入力と同じ機器（{device.label}）で、サンプルレートが違います。"
+                                  "Macでは入力が止まるため、別の機器（スピーカー・ヘッドフォン）を選ぶか、"
+                                  "「Audio MIDI設定」でこの機器を48kHzにしてください。")
+            log.warning("Monitor skipped: same device as input (%s)", device.label)
             return False
         try:
             player = MonitorPlayer(self.backend)

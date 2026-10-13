@@ -1,6 +1,7 @@
 import ctypes
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,10 +18,15 @@ class NativeTiming(ctypes.Structure):
 
 
 def _load_library():
-    path = Path(__file__).parent / "native" / "female_dsp_x64.dll"
-    manifest = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
-    if hashlib.sha256(path.read_bytes()).hexdigest() != manifest["dll_sha256"]:
-        raise RuntimeError("DSP DLL checksum mismatch; rebuild with tools/build_native.py")
+    folder = Path(__file__).parent / "native"
+    if sys.platform == "darwin":
+        # Built locally from female_dsp.cpp (clang++ -shared); no pinned checksum.
+        path = folder / "female_dsp_arm64.dylib"
+    else:
+        path = folder / "female_dsp_x64.dll"
+        manifest = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+        if hashlib.sha256(path.read_bytes()).hexdigest() != manifest["dll_sha256"]:
+            raise RuntimeError("DSP DLL checksum mismatch; rebuild with tools/build_native.py")
     library = ctypes.CDLL(str(path.resolve()))
     library.avc_abi_version.restype = ctypes.c_int
     if library.avc_abi_version() != 1:

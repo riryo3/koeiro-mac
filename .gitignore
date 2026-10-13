@@ -89,3 +89,6 @@ commit-message.txt
 
 # Text-to-speech: downloaded by tools/install_tts.py, never committed.
 models/tts/
+
+# macOS build output (tools/build_native_mac.sh)
+src/processors/native/*.dylib

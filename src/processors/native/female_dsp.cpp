@@ -5,7 +5,11 @@
 #include <atomic>
 #include <chrono>
 #include <vector>
+#if defined(__aarch64__)
+#include <cstdint>
+#else
 #include <xmmintrin.h>
+#endif
 #include "tone.h"
 #include "limiter.h"
 
@@ -17,9 +21,15 @@ struct Parameters {
 };
 
 struct FloatMode {
+#if defined(__aarch64__)
+    uint64_t previous;
+    FloatMode() { asm volatile("mrs %0, fpcr" : "=r"(previous)); uint64_t v = previous | (1ull << 24); asm volatile("msr fpcr, %0" :: "r"(v)); }
+    ~FloatMode() { asm volatile("msr fpcr, %0" :: "r"(previous)); }
+#else
     unsigned previous = _mm_getcsr();
     FloatMode() { _mm_setcsr(previous | 0x8040); }
     ~FloatMode() { _mm_setcsr(previous); }
+#endif
 };
 
 struct NativeTiming {
@@ -132,7 +142,11 @@ struct DSP {
     }
 };
 
+#if defined(_WIN32)
 #define API extern "C" __declspec(dllexport)
+#else
+#define API extern "C" __attribute__((visibility("default")))
+#endif
 API int avc_abi_version() { return 1; }
 API void *avc_create(int rate, int maxFrames, int quality) noexcept {
     if ((rate != 44100 && rate != 48000) || maxFrames < 1 || maxFrames > 1024 || quality < 0 || quality > 1) return nullptr;

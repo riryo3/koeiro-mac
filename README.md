@@ -16,6 +16,8 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
 </p>
 
+> 🍎 **Mac（Apple Silicon）対応ブランチ（非公式）**: 本家 [heynegix/koeiro](https://github.com/heynegix/koeiro)（MIT）からのフォークです。Mac で動かす手順と変更点は [MAC.md](MAC.md) を参照してください。
+
 ---
 
 ## 📖 概要

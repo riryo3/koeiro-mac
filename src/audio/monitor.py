@@ -130,7 +130,9 @@ class MonitorPlayer:
             self._scratch = np.empty(blocksize, dtype=np.float32)
             self.tap = tap
             tap.active = True
-            self._stream = self.backend.Stream(
+            # Output-only: a duplex Stream fails on devices with no input (headphone jack).
+            opener = getattr(self.backend, "OutputStream", None) or self.backend.Stream
+            self._stream = opener(
                 device=device.index, samplerate=rate, blocksize=blocksize,
                 channels=channels, dtype="float32", latency="high",
                 callback=self._callback,
