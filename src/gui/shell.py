@@ -213,11 +213,25 @@ class MeterStrip(QWidget):
             fraction = max(0.0, min(1.0, (level - self.DB_MIN)/-self.DB_MIN))
             y = self._y(fraction, top, height)
             # The handle sits on the outer edge of each bar: left for input, right for output.
-            low, high = ((xs[0] - 14, xs[0] + bar_width + 4) if index == 0
-                         else (xs[1] - 4, xs[1] + bar_width + 14))
-            if low <= pos.x() <= high and abs(pos.y() - y) <= self.GRAB:
+            low, high = ((xs[0] - 18, xs[0] + bar_width + 4) if index == 0
+                         else (xs[1] - 4, xs[1] + bar_width + 18))
+            if low <= pos.x() <= high and abs(pos.y() - y) <= self.GRAB + 3:
                 return index
         return None
+
+    @staticmethod
+    def _thumb(painter, rect, active=False, dim=False):
+        """A slider thumb: rounded, themed edge, three grip lines, so it reads as draggable."""
+        edge = QColor(LIVE if not dim else BORDER_DARK)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(edge, 2))
+        painter.setBrush(QColor(LIVE) if active else QColor(HANDLE))
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 5, 5)
+        painter.setPen(QPen(QColor(HANDLE if active else edge), 1.4))
+        middle = rect.center().x() + 1
+        for offset in (-4, 0, 4):
+            painter.drawLine(middle - 4, rect.center().y() + offset, middle + 4, rect.center().y() + offset)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
     def _db_at(self, y):
         top, height, _xs, _bar = self._geometry()
@@ -325,22 +339,20 @@ class MeterStrip(QWidget):
             painter.setPen(QColor(TEXT_MUTED))
             painter.setBrush(QColor(TEXT_MUTED))
             painter.setFont(small)
-            if index == 0:       # input gate: handle and number on the left
-                painter.drawRoundedRect(xs[0] - 8, gate_y - 4, 8, 9, 2, 2)
-                area = QRect(0, gate_y - 15, xs[0] - 11, 28)
+            if index == 0:       # input gate: thumb and number on the left
+                self._thumb(painter, QRect(xs[0] - 15, gate_y - 10, 17, 21), self._drag == 0)
+                area = QRect(0, gate_y - 15, xs[0] - 18, 28)
                 align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            else:                # output gate: handle and number on the right
-                painter.drawRoundedRect(xs[1] + bar_width, gate_y - 4, 8, 9, 2, 2)
-                left = xs[1] + bar_width + 11
+            else:                # output gate: thumb and number on the right
+                self._thumb(painter, QRect(xs[1] + bar_width - 2, gate_y - 10, 17, 21), self._drag == 1)
+                left = xs[1] + bar_width + 18
                 area = QRect(left, gate_y - 15, max(10, self.width() - left), 28)
                 align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             painter.drawText(area, align, f'{name}\n{gate_db:.0f} dB')
         if self._out_gate_db is None:
             # Output gate off: a dim handle rests at the floor so it can be dragged up.
             floor_y = self._y(0.0, top, height)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(TRACK))
-            painter.drawRoundedRect(xs[1] + bar_width, floor_y - 5, 8, 9, 2, 2)
+            self._thumb(painter, QRect(xs[1] + bar_width - 2, floor_y - 10, 17, 21), self._drag == 1, dim=True)
         # The dB scale is shared and sits between the two bars.
         font = painter.font()
         font.setPointSize(8)
@@ -1628,7 +1640,7 @@ def stylesheet(asset_dir):
         QSlider::sub-page:vertical { background: %(groove)s; border-radius: 4px; }
         QSlider::add-page:vertical { background: %(live)s; border-radius: 4px; }
         QSlider::handle:vertical { background: %(handle)s; border: 2px solid %(live)s;
-                                   height: 16px; width: 34px; margin: 0 -14px; border-radius: 5px; }
+                                   height: 22px; width: 30px; margin: 0 -11px; border-radius: 6px; }
         QSlider::handle:vertical:hover { background: %(press_light)s; }
         QSlider::handle:vertical:pressed { background: %(press_light)s; }
         QSlider::groove:horizontal { background: %(track)s; height: 5px; border-radius: 2px; }
@@ -1643,7 +1655,7 @@ def stylesheet(asset_dir):
         QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
         QScrollBar::handle:horizontal { background: %(border_dark)s; border-radius: 4px; min-width: 30px; }
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }
-        QToolTip { background: %(primary)s; color: %(primary_text)s; border: none; padding: 5px; }
+        QToolTip { background: %(primary)s; color: %(primary_text)s; border: none; border-radius: 7px; padding: 6px 9px; }
     """.replace('__ARROW__', arrow) % {
         'bg': BG, 'edge': BORDER, 'text': TEXT, 'muted': TEXT_MUTED,
         'primary': PRIMARY, 'primary_text': PRIMARY_TEXT, 'live': LIVE,
@@ -1746,6 +1758,43 @@ class Fader(StepSlider):
     def mouseDoubleClickEvent(self, event):
         self.setValue(self.default_value)
         event.accept()
+
+    def paintEvent(self, event):
+        from PySide6.QtWidgets import QStyle, QStyleOptionSlider
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        option = QStyleOptionSlider()
+        self.initStyleOption(option)
+        style = self.style()
+        handle = style.subControlRect(QStyle.ComplexControl.CC_Slider, option,
+                                      QStyle.SubControl.SC_SliderHandle, self)
+        groove = style.subControlRect(QStyle.ComplexControl.CC_Slider, option,
+                                      QStyle.SubControl.SC_SliderGroove, self)
+        centre = self.width()//2
+        track = QRect(centre - 4, groove.top(), 8, groove.height())
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(GROOVE))
+        painter.drawRoundedRect(track, 4, 4)
+        painter.setBrush(QColor(LIVE))                      # filled from the bottom up to the cap
+        painter.drawRoundedRect(QRect(track.left(), handle.center().y(), 8,
+                                      track.bottom() - handle.center().y()), 4, 4)
+        # 0 dB mark: a short tick on both sides of the groove
+        span = max(1, groove.height() - handle.height())
+        zero = QStyle.sliderPositionFromValue(self.minimum(), self.maximum(), 0, span, True)
+        zero_y = groove.top() + handle.height()//2 + zero
+        painter.setPen(QPen(QColor(TEXT_MUTED), 1.5))
+        painter.drawLine(centre - 10, zero_y, centre - 6, zero_y)
+        painter.drawLine(centre + 6, zero_y, centre + 10, zero_y)
+        # the cap: big, rounded, themed edge, three grip lines
+        cap = QRect(centre - 15, handle.center().y() - 11, 30, 22)
+        pressed = bool(option.state & QStyle.StateFlag.State_Sunken)
+        painter.setPen(QPen(QColor(LIVE), 2))
+        painter.setBrush(QColor(LIVE) if pressed else QColor(HANDLE))
+        painter.drawRoundedRect(cap.adjusted(1, 1, -1, -1), 6, 6)
+        painter.setPen(QPen(QColor(HANDLE if pressed else LIVE), 1.6))
+        for offset in (-4, 0, 4):
+            painter.drawLine(cap.center().x() - 7, cap.center().y() + offset,
+                             cap.center().x() + 7, cap.center().y() + offset)
 
 
 class ScrollHints(QObject):
