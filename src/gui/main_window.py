@@ -255,14 +255,26 @@ class MainWindow(QMainWindow):
         strip_layout.setSpacing(6)
         meter_caption = QLabel('レベル（dBFS）')
         meter_caption.setObjectName('muted')
-        strip_layout.addWidget(meter_caption)
+        meter_caption.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         # The colour key sits at the top, under the title (it used to hang at the bottom).
         meter_key = QLabel('<span style="color:#2f9e6f">■</span> 適正　'
                            '<span style="color:#d9a21b">■</span> 大きめ　'
                            '<span style="color:#dc2626">■</span> 音割れ')
         meter_key.setObjectName('muted')
         meter_key.setTextFormat(Qt.TextFormat.RichText)
-        strip_layout.addWidget(meter_key)
+        meter_key.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        # Title and key are centred over the pair of bars: the bars fill the meter widget,
+        # whose width is the strip minus the Gain fader column (58 px + 8 px gap) on the right.
+        title_row = QHBoxLayout()
+        title_row.setSpacing(0)
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_column = QVBoxLayout()
+        title_column.setSpacing(2)
+        title_column.addWidget(meter_caption)
+        title_column.addWidget(meter_key)
+        title_row.addLayout(title_column, 1)
+        title_row.addSpacing(66)
+        strip_layout.addLayout(title_row)
         self.input_bar = MeterStrip()
         # The meters and, to their right, a vertical Gain fader (like a mixer channel).
         meter_row = QHBoxLayout()

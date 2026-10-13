@@ -1553,6 +1553,11 @@ def stylesheet(asset_dir):
                                   color: %(muted)s; }
         QPushButton#routeButton:hover { color: %(text)s; }
         QPushButton#routeButton:checked { background: %(live)s; color: %(primary_text)s; }
+        /* A segmented choice that cannot be changed right now must not glow like one that can. */
+        QPushButton#routeButton:disabled, QPushButton#filterTab:disabled,
+        QPushButton#indexJump:disabled { color: %(dis_fg)s; background: transparent; }
+        QPushButton#routeButton:checked:disabled, QPushButton#filterTab:checked:disabled,
+        QPushButton#indexJump:checked:disabled { background: %(groove)s; color: %(dis_fg)s; }
         QLabel#muted { color: %(muted)s; font-size: 12px; }
         QLabel#title { font-size: 22px; font-weight: 600; }
         QLabel#sectionTitle { font-size: 16px; font-weight: 600; color: %(text)s; }
