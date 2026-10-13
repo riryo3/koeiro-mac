@@ -564,9 +564,9 @@ class MainWindow(QMainWindow):
         mode_row.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         mode_row.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         self.mode = QComboBox()
-        self.mode.addItem('Original / 変換なし　　　⌘1', 'original')
-        self.mode.addItem('Female DSP / 軽い加工　⌘2', 'female_dsp')
-        self.mode.addItem('AI Voice / 声の変換　　⌘3', 'ai_voice')
+        self.mode.addItem('Original / 変換なし', 'original')
+        self.mode.addItem('Female DSP / 軽い加工', 'female_dsp')
+        self.mode.addItem('AI Voice / 声の変換', 'ai_voice')
         # 同時通訳 is hidden in this build: upstream has no translation step yet (it reads
         # the recognised Japanese text with an English voice). Re-add the item to bring it back:
         # self.mode.addItem('同時通訳 / English voice', 'translate')
@@ -961,6 +961,25 @@ class MainWindow(QMainWindow):
         self.action_restart_ai = QAction('AIを再起動', self)
         self.action_restart_ai.triggered.connect(self._restart_ai)
         control.addAction(self.action_restart_ai)
+        control.addSeparator()
+        # 変換モード: the same choice as the pull-down, with its shortcuts.
+        from PySide6.QtGui import QActionGroup
+        mode_group = QActionGroup(self)
+        self.mode_actions = {}
+        for key, label, shortcut in (('original', 'Original / 変換なし', 'Ctrl+1'),
+                                     ('female_dsp', 'Female DSP / 軽い加工', 'Ctrl+2'),
+                                     ('ai_voice', 'AI Voice / 声の変換', 'Ctrl+3')):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setShortcut(shortcut)
+            action.triggered.connect(lambda _checked=False, mode_key=key: self._select_mode(mode_key))
+            mode_group.addAction(action)
+            control.addAction(action)
+            self.mode_actions[key] = action
+        self.action_ab = QAction('変換なしと切り替えて聞き比べる', self)
+        self.action_ab.setShortcut('Ctrl+D')
+        self.action_ab.triggered.connect(self._ab_toggle)
+        control.addAction(self.action_ab)
         self.voice_menu = menu_bar.addMenu('声')
         # シーン: the settings dialog on top, then every saved scene to load with one click.
         self.scene_menu = menu_bar.addMenu('シーン')
@@ -4029,17 +4048,20 @@ class MainWindow(QMainWindow):
         """
         from PySide6.QtGui import QKeySequence, QShortcut
         self._ab_last = 'ai_voice'
-        bindings = (('Ctrl+1', lambda: self._select_mode('original')),
-                    ('Ctrl+2', lambda: self._select_mode('female_dsp')),
-                    ('Ctrl+3', lambda: self._select_mode('ai_voice')),
-                    ('Ctrl+D', self._ab_toggle),
-                    ('Ctrl+F', self._focus_drawer_search))
+        bindings = (('Ctrl+F', self._focus_drawer_search),)
+        self.mode.currentIndexChanged.connect(self._sync_mode_actions)
+        self._sync_mode_actions()
         self.hotkeys = {}
         for sequence, handler in bindings:
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
             shortcut.activated.connect(handler)
             self.hotkeys[sequence] = shortcut
+
+    def _sync_mode_actions(self, *_):
+        action = getattr(self, 'mode_actions', {}).get(self.mode.currentData())
+        if action is not None and not action.isChecked():
+            action.setChecked(True)
 
     def _select_mode(self, key):
         """Route switch used by the shortcuts; mirrors the mode combo the user drives."""
@@ -4511,7 +4533,7 @@ class MainWindow(QMainWindow):
             if ai.get('delivery')=='utterance' and fallback:fallback=' · 発話出力は無音'
             self.ai_status.setText(f"AI Status: {ai['status']}{fallback}\n{ai['error']}")
             health = (realtime_health(ai,callback_stats,1000*self.buffer.currentData()/self.rate.currentData())
-                      if self.mode.currentData()=='ai_voice' else self.mode.currentText().split('　')[0])
+                      if self.mode.currentData()=='ai_voice' else self.mode.currentText())
             prosody=ai['prosody']
             self.health.setText('Realtime Health: '+health+' · '+prosody['health'])
             # Progress belongs to a live run: while stopped this line would claim a
