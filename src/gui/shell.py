@@ -1569,7 +1569,42 @@ class ErrorDialog(QFrame):
         self.raise_()
 
 
-class Fader(QSlider):
+class StepSlider(QSlider):
+    """A slider whose track steps by 10 % of its range per click.
+
+    Clicking the track beside the handle moves toward the click by one page (10 % of the
+    range) instead of jumping to the click; pressing the handle still drags as usual.
+    """
+
+    PAGE_FRACTION = 0.10
+
+    def setRange(self, minimum, maximum):
+        super().setRange(minimum, maximum)
+        self.setPageStep(max(1, round((maximum - minimum)*self.PAGE_FRACTION)))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            from PySide6.QtWidgets import QStyle, QStyleOptionSlider
+            option = QStyleOptionSlider()
+            self.initStyleOption(option)
+            handle = self.style().subControlRect(
+                QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderHandle, self)
+            position = event.position().toPoint()
+            if not handle.contains(position):
+                if self.orientation() == Qt.Orientation.Horizontal:
+                    forward = position.x() > handle.center().x()
+                else:
+                    forward = position.y() < handle.center().y()   # up = larger
+                if self.invertedAppearance():
+                    forward = not forward
+                step = self.pageStep()
+                self.setValue(self.value() + (step if forward else -step))
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+
+class Fader(StepSlider):
     """A vertical level fader (like a mixer channel); a double click returns to `default`."""
 
     def __init__(self, minimum, maximum, default, parent=None):

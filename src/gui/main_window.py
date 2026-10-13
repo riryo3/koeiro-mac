@@ -3368,7 +3368,8 @@ class MainWindow(QMainWindow):
         reset.setVisible(False)
         row.addWidget(label)
         column.addLayout(row)
-        slider = QSlider(Qt.Orientation.Horizontal)
+        from .shell import StepSlider
+        slider = StepSlider(Qt.Orientation.Horizontal)
         slider.setRange(minimum, maximum)
         slider.setValue(value)
         # The reset button sits to the right of the track, where the hand already is.
