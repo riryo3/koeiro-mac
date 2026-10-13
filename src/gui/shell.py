@@ -220,11 +220,26 @@ class MeterStrip(QWidget):
         return self.DB_MIN + fraction*(-self.DB_MIN)
 
     def mousePressEvent(self, event):
-        index = self._gate_at(event.position().toPoint())
+        position = event.position().toPoint()
+        index = self._gate_at(position)
         if index is not None and event.button() == Qt.MouseButton.LeftButton:
             self._drag = index
             event.accept()
             return
+        # A click on a bar away from its gate line steps the gate by 10 % of the meter
+        # range (6 dB) toward the click, like clicking beside a slider handle.
+        if event.button() == Qt.MouseButton.LeftButton:
+            top, height, xs, bar_width = self._geometry()
+            if top <= position.y() <= top + height:
+                for bar in (0, 1):
+                    if xs[bar] <= position.x() <= xs[bar] + bar_width:
+                        level = self._gate_value(bar)
+                        step = -self.DB_MIN*0.10
+                        target = level + (step if position.y() < self._y(
+                            max(0.0, min(1.0, (level - self.DB_MIN)/-self.DB_MIN)), top, height) else -step)
+                        (self.gateDragged if bar == 0 else self.outputGateDragged).emit(target)
+                        event.accept()
+                        return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
