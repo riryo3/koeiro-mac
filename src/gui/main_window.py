@@ -474,7 +474,9 @@ class MainWindow(QMainWindow):
         self.mode.addItem('Original / 変換なし', 'original')
         self.mode.addItem('Female DSP / 軽い加工', 'female_dsp')
         self.mode.addItem('AI Voice / 声の変換', 'ai_voice')
-        self.mode.addItem('同時通訳 / English voice', 'translate')
+        # 同時通訳 is hidden in this build: upstream has no translation step yet (it reads
+        # the recognised Japanese text with an English voice). Re-add the item to bring it back:
+        # self.mode.addItem('同時通訳 / English voice', 'translate')
         self.mode.setToolTip('声の変換方法を選びます。\n'
                           'Original: 変換しません\n'
                           'Female DSP: 軽い加工（CPUが軽い）\n'
@@ -618,7 +620,7 @@ class MainWindow(QMainWindow):
         self._build_settings_columns()
         self.drawer_lab.build_index()
 
-        self.mode.setCurrentIndex(self.mode.findData(self.settings.voice_mode))
+        self.mode.setCurrentIndex(self._mode_index(self.settings.voice_mode))
         self._publish_dsp()
         self.input_device.currentIndexChanged.connect(self._route_changed)
         self.output_device.currentIndexChanged.connect(self._route_changed)
@@ -874,6 +876,11 @@ class MainWindow(QMainWindow):
         narrow = self.width() < 1500
         if (not self.voice_panel.isHidden()) == narrow:
             self._toggle_voice_panel(collapsed=narrow)
+
+    def _mode_index(self, value):
+        """Combo index for a saved mode; a mode that is not offered (translate) becomes AI Voice."""
+        index = self.mode.findData(value)
+        return index if index >= 0 else max(0, self.mode.findData('ai_voice'))
 
     def _toggle_tune_dock(self):
         """The 調整 button folds the three columns away or brings them back."""
@@ -3624,7 +3631,7 @@ class MainWindow(QMainWindow):
             self.ai_model.setCurrentIndex(voice_index)
         self._apply_dsp_widgets(settings.dsp_parameters(), settings.preset)
         self._apply_prosody_widgets(settings.prosody_parameters())
-        self.mode.setCurrentIndex(self.mode.findData(settings.voice_mode))
+        self.mode.setCurrentIndex(self._mode_index(settings.voice_mode))
         self._ai_structure_changed()
         self._route_changed()
         return True
