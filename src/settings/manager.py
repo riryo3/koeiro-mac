@@ -44,6 +44,8 @@ class AppSettings:
     noise_gate_db: float = -45.0
     # Output gate: the AI model hums at about -37 dBFS even when fed silence. <= -70 is off.
     output_gate_db: float = -34.0
+    # Theme colour (accent): buttons, selected tabs, Start. Any #rrggbb.
+    theme_color: str = '#284b7d'
     # Off by default: the spectral stage is a user choice, not the shipped route.
     denoise: bool = False
     denoise_strength: float = 0.6
@@ -148,6 +150,9 @@ class AppSettings:
         values["gain_db"] = _number(data.get("gain_db"), 0.0, -20, 20)
         values["noise_gate_db"] = _number(data.get("noise_gate_db"), -45.0, -80, -10)
         values["output_gate_db"] = _number(data.get("output_gate_db"), -34.0, -80, -10)
+        theme = data.get("theme_color")
+        values["theme_color"] = (theme if isinstance(theme, str) and len(theme) == 7 and theme[0] == '#'
+                                 and all(c in '0123456789abcdefABCDEF' for c in theme[1:]) else '#284b7d')
         denoise = data.get("denoise")
         values["denoise"] = denoise if type(denoise) is bool else False
         values["denoise_strength"] = _number(data.get("denoise_strength"), 0.6, 0, 1)

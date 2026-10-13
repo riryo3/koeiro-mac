@@ -16,7 +16,8 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QPushButton,
                                QScrollArea, QVBoxLayout, QWidget)
 
-from .shell import GUIDE_DIM, LIVE
+from . import shell as _shell
+from .shell import GUIDE_DIM
 
 # `drawer` is the drawer to open ('tune', 'lab', or None for the stage itself) and
 # `target` is the MainWindow attribute to light up. `voice` unfolds the voice list
@@ -310,7 +311,7 @@ class TutorialOverlay(QWidget):
         cut = QPainterPath()
         cut.addRoundedRect(window, 10, 10)
         painter.fillPath(shape.subtracted(cut), dim)
-        pen = QPen(QColor(LIVE))
+        pen = QPen(QColor(_shell.LIVE))
         pen.setWidth(self.RING)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)

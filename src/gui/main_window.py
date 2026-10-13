@@ -345,6 +345,7 @@ class MainWindow(QMainWindow):
         # The voice list: right-hand, and foldable to zero width.
         self.voice_panel = VoicePanel()
         body_row.addWidget(self.voice_panel)
+        shell.set_theme(self.settings.theme_color)
         self.setStyleSheet(stylesheet(Path(__file__).parent/'assets'))
 
         # The two drawers overlap the stage from the right.
@@ -815,6 +816,14 @@ class MainWindow(QMainWindow):
         self.action_voice_list.setShortcut('Ctrl+L')
         self.action_voice_list.toggled.connect(self._voice_list_menu_toggled)
         view.addAction(self.action_voice_list)
+        from . import shell
+        theme = QAction('テーマカラー…', self)
+        theme.triggered.connect(self._choose_theme_color)
+        view.addAction(theme)
+        theme_reset = QAction('テーマカラーをもとに戻す', self)
+        theme_reset.triggered.connect(lambda: self._apply_theme_color(shell.DEFAULT_THEME))
+        view.addAction(theme_reset)
+        view.addSeparator()
         lab = QAction('実験…', self)
         lab.triggered.connect(lambda: self._open_drawer('lab'))
         view.addAction(lab)
@@ -953,6 +962,27 @@ class MainWindow(QMainWindow):
         foot.addWidget(ok)
         column.addLayout(foot)
         dialog.exec()
+
+    def _choose_theme_color(self):
+        """The OS colour picker; the theme colour tints buttons, tabs, Start and highlights."""
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(QColor(self.settings.theme_color), self,
+                                      'テーマカラーを選ぶ（濃い色がおすすめです）')
+        if color.isValid():
+            self._apply_theme_color(color.name())
+
+    def _apply_theme_color(self, hex_color):
+        from . import shell
+        from .shell import stylesheet
+        shell.set_theme(hex_color)
+        self.setStyleSheet(stylesheet(Path(__file__).parent/'assets'))
+        self.settings = replace(self.settings, theme_color=hex_color)
+        self._save_settings()
+        for widget in self.findChildren(QWidget):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.update()
 
     def _voice_list_menu_toggled(self, checked):
         # An explicit choice wins over the automatic fold on a narrow window.

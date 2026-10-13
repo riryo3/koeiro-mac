@@ -27,10 +27,15 @@ TEXT = '#18181b'
 # Spec secondary #666666 misses AA on pills (4.40:1), so one step darker;
 # still the same gray family, and AA everywhere it sits.
 TEXT_MUTED = '#606060'
-PRIMARY = '#284b7d'
+DEFAULT_THEME = '#284b7d'
+PRIMARY = DEFAULT_THEME
 PRIMARY_TEXT = '#ffffff'
-LIVE = '#284b7d'
+LIVE = DEFAULT_THEME
 PILL = '#dde1f0'
+# Derived from the theme colour (set_theme): the pressed fills.
+PRESS_DARK = '#1b3358'
+PRESS_LIGHT = '#b5c2de'
+BORDER_DARK_THEME = None
 TRACK = '#d4dbe5'
 DANGER = '#dc2626'
 # The fill red misses AA as words on the page (4.30:1), so error text uses the
@@ -1215,6 +1220,36 @@ class EdgeResize(QObject):
         return True
 
 
+def _mix(hex_a, hex_b, amount):
+    """Blend hex_a toward hex_b by `amount` (0..1)."""
+    a = [int(hex_a[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(hex_b[i:i + 2], 16) for i in (1, 3, 5)]
+    return '#%02x%02x%02x' % tuple(round(x + (y - x)*amount) for x, y in zip(a, b))
+
+
+def set_theme(hex_color=DEFAULT_THEME):
+    """Set the theme (accent) colour used by the stylesheet and the painted widgets.
+
+    The default reproduces the original look exactly. For other colours the pressed
+    fills and the pill tint are derived from it, and the text drawn on the accent is
+    white or near-black, whichever reads better.
+    """
+    global PRIMARY, LIVE, PRIMARY_TEXT, PILL, PRESS_DARK, PRESS_LIGHT, BORDER_DARK_THEME
+    color = hex_color if isinstance(hex_color, str) and len(hex_color) == 7 else DEFAULT_THEME
+    PRIMARY = LIVE = color
+    if color.lower() == DEFAULT_THEME:
+        PRIMARY_TEXT, PILL, PRESS_DARK, PRESS_LIGHT = '#ffffff', '#dde1f0', '#1b3358', '#b5c2de'
+        BORDER_DARK_THEME = None
+        return
+    red, green, blue = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    luminance = (0.2126*red + 0.7152*green + 0.0722*blue)/255
+    PRIMARY_TEXT = '#ffffff' if luminance < 0.6 else '#18181b'
+    PRESS_DARK = _mix(color, '#000000', 0.35)
+    PRESS_LIGHT = _mix(color, '#ffffff', 0.65)
+    PILL = _mix(color, '#ffffff', 0.88)
+    BORDER_DARK_THEME = _mix(color, '#ffffff', 0.55)
+
+
 def stylesheet(asset_dir):
     """Shared dark-navy theme for the shell; widget-level tweaks stay in main_window."""
     import pathlib
@@ -1284,7 +1319,7 @@ def stylesheet(asset_dir):
                                 color: %(primary_text)s; font-weight: 600; padding: 8px 22px;
                                 border-radius: 20px; }
         QPushButton#guideNext:focus { border-color: %(live)s; }
-        QPushButton#guideNext:pressed { background: #1b3358; border-color: #1b3358; }
+        QPushButton#guideNext:pressed { background: %(press_dark)s; border-color: %(press_dark)s; }
         QPushButton#guideBack { padding: 8px 16px; }
         QPushButton#guideSkip { background: transparent; border: none; color: %(muted)s;
                                 padding: 6px 8px; }
@@ -1341,7 +1376,7 @@ def stylesheet(asset_dir):
                                       selection-background-color: %(pill)s; selection-color: %(text)s; }
         QPushButton:hover { border-color: %(live)s; }
         /* Pressed: a clearly deeper fill, a navy edge and a 1 px sink, so a click is visible. */
-        QPushButton:pressed { background: #b5c2de; border-color: %(live)s;
+        QPushButton:pressed { background: %(press_light)s; border-color: %(live)s;
                               padding-top: 8px; padding-bottom: 6px; }
         QPushButton:focus, QComboBox:focus, QLineEdit:focus { border-color: %(live)s; }
         QCheckBox { spacing: 8px; color: %(text)s; border: 1px solid transparent; border-radius: 4px; }
@@ -1354,9 +1389,9 @@ def stylesheet(asset_dir):
         QPushButton#start { background: %(primary)s; border-color: %(primary)s; color: %(primary_text)s;
                             font-weight: 600; padding: 10px 26px; border-radius: 8px; }
         QPushButton#start:focus { border-color: %(live)s; }
-        QPushButton#start:pressed { background: #1b3358; border-color: #1b3358;
+        QPushButton#start:pressed { background: %(press_dark)s; border-color: %(press_dark)s;
                                     padding-top: 11px; padding-bottom: 9px; }
-        QPushButton#stop:pressed { background: #b5c2de; border-color: %(live)s;
+        QPushButton#stop:pressed { background: %(press_light)s; border-color: %(live)s;
                                    padding-top: 11px; padding-bottom: 9px; }
         QPushButton#start:disabled { background: %(pill)s; color: #9aa3b2; border-color: %(pill)s; }
         /* Anything that cannot be used right now is washed out, not just a bit lighter. */
@@ -1369,7 +1404,7 @@ def stylesheet(asset_dir):
         QPushButton#scrollHint { background: %(card)s; color: %(live)s; border: 1px solid %(live)s;
                                  border-radius: 16px; padding: 0px; font-size: 16px; font-weight: 600; }
         QPushButton#scrollHint:hover { background: %(live)s; color: #ffffff; }
-        QPushButton#scrollHint:pressed { background: #1b3358; color: #ffffff; padding: 0px; }
+        QPushButton#scrollHint:pressed { background: %(press_dark)s; color: #ffffff; padding: 0px; }
         QPushButton#stop { padding: 10px 22px; border-radius: 8px; }
         QLabel#warningText { color: %(warn)s; font-size: 12px; }
         QLabel#stepTitle { color: %(text)s; font-size: 16px; font-weight: 600; }
@@ -1398,8 +1433,8 @@ def stylesheet(asset_dir):
         'bg': BG, 'edge': BORDER, 'text': TEXT, 'muted': TEXT_MUTED,
         'primary': PRIMARY, 'primary_text': PRIMARY_TEXT, 'live': LIVE,
         'pill': PILL, 'track': TRACK, 'card': CARD, 'border': BORDER,
-        'border_dark': BORDER_DARK, 'danger': DANGER, 'danger_text': DANGER_TEXT,
-        'warn': WARN}
+        'border_dark': BORDER_DARK_THEME or BORDER_DARK, 'danger': DANGER, 'danger_text': DANGER_TEXT,
+        'warn': WARN, 'press_dark': PRESS_DARK, 'press_light': PRESS_LIGHT}
 
 
 class ErrorDialog(QFrame):
