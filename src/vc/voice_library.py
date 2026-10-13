@@ -2,10 +2,27 @@
 import hashlib
 import json
 import math
+import platform
 from pathlib import Path
 import re
+import sys
 
 from ..runtime_paths import asset_root, install_root, is_frozen
+
+
+# Inference grouping. The default is tuned for a slow CPU (six 120 ms blocks per call).
+# Apple Silicon measured 120 ms of audio in about 33 ms, so it runs one block per call
+# and starts playback after two blocks: model buffer 530 ms instead of 1490 ms.
+if sys.platform == 'darwin' and platform.machine() == 'arm64':
+    _TIMING = dict(vc_group_chunks=1, vocoder_batch_frames=1,
+                   model_buffer_ms=530, grid_delay_ms=0, extra_delay_ms=1600,
+                   startup_chunks=2, queue_chunks=10, mute_during_startup=True)
+    _CONDITION = 'user voice: ungrouped VC + 1-frame Vocos (low latency)'
+else:
+    _TIMING = dict(vc_group_chunks=6, vocoder_batch_frames=36,
+                   model_buffer_ms=1490, grid_delay_ms=0, extra_delay_ms=1600,
+                   startup_chunks=6, queue_chunks=10, mute_during_startup=True)
+    _CONDITION = 'user voice: 720ms grouped VC + 36-frame Vocos'
 
 
 def library_root():
@@ -97,10 +114,8 @@ def discover(root=ROOT):
                 name=DEFAULT_VOICE_NAME if identifier == DEFAULT_VOICE_ID else name,
                 backend='meanvc2', user_voice=True, phrase_repair=True,
                 standard=identifier == DEFAULT_VOICE_ID,
-                vc_group_chunks=6, vocoder_batch_frames=36,
-                model_buffer_ms=1490, grid_delay_ms=0, extra_delay_ms=1600,
-                startup_chunks=6, queue_chunks=10, mute_during_startup=True,
-                optimized_condition='user voice: 720ms grouped VC + 36-frame Vocos',
+                **_TIMING,
+                optimized_condition=_CONDITION,
                 voice=0, pitch=0., formant=0.)
         except (OSError, ValueError, TypeError, AttributeError):
             continue

@@ -27,14 +27,14 @@ PAGES = (
     dict(title="Koeiro へようこそ",
          drawer=None, target="start_button",
          body="マイクの声を、選んだ声に変えて出力します。相手に届くのは変換後の声だけです。\n"
-              "設定は右上の「調整」にまとまっています。この案内では順に確かめます。"),
+              "設定は画面中央の3列（配線・変換・アプリ）にまとまっています。順に確かめます。"),
     dict(title="① マイクを選ぶ",
          drawer="tune", target="input_device",
          body="ふだん使っているマイクを選びます。足したときは「デバイス一覧を更新」を押します。\n"
-              "入力レベルが -20dB 前後で揺れていれば準備完了です。"),
+              "左のレベルメーターが、話すと緑〜黄色で揺れていれば準備完了です。"),
     dict(title="② 声を選ぶ",
          drawer=None, voice=True, target="voice_panel",
-         body="右のリストから、なりたい声を選びます。名前が分かるときは検索欄へ。\n"
+         body="右の「声リスト」から、なりたい声を選びます。名前が分かるときは検索欄へ。\n"
               "自分の声を使うときは「＋ 声を追加」から登録します。"),
     dict(title="② 待つか、待たないか",
          drawer="tune", target="route_box",
@@ -42,7 +42,7 @@ PAGES = (
               "迷ったら一括のままで大丈夫です。あとから変えられます。"),
     dict(title="③ Start して話す",
          drawer=None, target="start_button",
-         body="Start で変換を始め、Stop で止めます。3点リレーを押しても同じです。\n"
+         body="Start で変換を始め、Stop で止めます。右の流れ図（3つの点）を押しても同じです。\n"
               "変換中は「変換」の点だけがシアンになります。"),
     dict(title="困ったときは",
          drawer="tune", target="monitor_toggle",
@@ -197,9 +197,15 @@ class TutorialOverlay(QWidget):
         self.update()
 
     def _reposition(self):
-        """Place the ring now, and once more after the layout settles, then paint."""
+        """Place the ring now, and again while the layout settles, then paint.
+
+        The window can still be resizing (maximise, splash hand-over) when a page opens,
+        so one late placement measured a rectangle that moved afterwards; a few
+        staggered passes keep the ring on the control.
+        """
         self._place()
-        QTimer.singleShot(0, self._place_settled)
+        for delay in (0, 200, 600):
+            QTimer.singleShot(delay, self._place_settled)
 
     def _place_settled(self):
         if self.isVisible():
@@ -211,7 +217,10 @@ class TutorialOverlay(QWidget):
         target = self._target
         rect = None
         if target is not None and target.isVisible():
-            rect = QRect(target.mapTo(self, QPoint(0, 0)), target.size())
+            # The overlay is a sibling of the controls, not their ancestor, so mapTo()
+            # would answer in the top-level window's frame of reference (off by the
+            # title bar on macOS). Go through screen coordinates instead.
+            rect = QRect(self.mapFromGlobal(target.mapToGlobal(QPoint(0, 0))), target.size())
         self._target_rect = rect
         card = self.card
         card.adjustSize()
@@ -260,12 +269,14 @@ class TutorialOverlay(QWidget):
     def eventFilter(self, watched, event):
         if watched is self.host and event.type() == QEvent.Type.Resize:
             self.setGeometry(self.host.rect())
-            self._place()
+            # The window's children are laid out after the resize event, so the
+            # control has not moved yet: measure again once they have.
+            self._reposition()
         return False
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._place()
+        self._reposition()
 
     def keyPressEvent(self, event):
         key = event.key()

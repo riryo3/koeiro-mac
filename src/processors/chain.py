@@ -28,6 +28,23 @@ class SafetyClampProcessor(AudioProcessor):
         return audio
 
 
+class OutputGate(NoiseGateProcessor):
+    """A noise gate on the converted output, armed only on the AI route.
+
+    The MeanVC2 model keeps producing a faint breath (about -37 dBFS) from silence, so
+    the input gate alone cannot keep the output quiet while nobody speaks.
+    """
+
+    def __init__(self, threshold_db=-34.0):
+        super().__init__(threshold_db)
+        self.enabled = False
+
+    def process(self, audio, sample_rate):
+        if not self.enabled:
+            return audio
+        return super().process(audio, sample_rate)
+
+
 class ProcessorChain(AudioProcessor):
     def __init__(self, main_processor=None, gain_db=0.0, threshold_db=-45.0, denoise_strength=0.0,
                  whisper=None, finish=None):
@@ -61,7 +78,9 @@ class ProcessorChain(AudioProcessor):
         # passes through it, and a chain without it is the previous behaviour.
         from .natural_finish import NaturalFinishProcessor
         self.finish = finish if finish is not None else NaturalFinishProcessor()
-        self.post_processors = (self.ai_formant, self.finish, SafetyClampProcessor())
+        self.out_gate = OutputGate()
+        self.out_gate_on = True
+        self.post_processors = (self.out_gate, self.ai_formant, self.finish, SafetyClampProcessor())
         self._stages = (*self.pre_processors, self.main_processor, *self.post_processors)
         self.performance = TimingStats()
 
@@ -84,6 +103,7 @@ class ProcessorChain(AudioProcessor):
         ai = getattr(router, 'ai', None)
         self.gate.protect_quiet = (getattr(router, 'mode', None) == 'ai_voice'
                                    and ai is not None and is_meanvc2(ai.bridge.parameters.model))
+        self.out_gate.enabled = self.out_gate_on and getattr(router, 'mode', None) == 'ai_voice'
         # The finish only ever conditions converted output. The flag rides along
         # per block so a mid-stream route change takes effect on the next block.
         self.finish.route_active = getattr(router, 'mode', 'ai_voice') != 'original'

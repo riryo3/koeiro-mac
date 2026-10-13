@@ -151,6 +151,13 @@ class AudioController:
     def set_gate(self, db):
         self.engine.chain.gate.set_threshold(db)
 
+    def set_output_gate(self, db):
+        """Live: <= -70 dB switches the output gate off."""
+        chain = self.engine.chain
+        chain.out_gate_on = db > -70
+        if chain.out_gate_on:
+            chain.out_gate.set_threshold(db)
+
     def set_denoise(self, strength):
         """Live, in-place: 0 is a pass-through, so switching needs no stream restart."""
         self.engine.chain.denoise.set_strength(strength)

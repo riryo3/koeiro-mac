@@ -42,6 +42,8 @@ class AppSettings:
     buffer_size: int = 256
     gain_db: float = 0.0
     noise_gate_db: float = -45.0
+    # Output gate: the AI model hums at about -37 dBFS even when fed silence. <= -70 is off.
+    output_gate_db: float = -34.0
     # Off by default: the spectral stage is a user choice, not the shipped route.
     denoise: bool = False
     denoise_strength: float = 0.6
@@ -145,6 +147,7 @@ class AppSettings:
             values[field] = value if type(value) is int and value in choices else getattr(defaults, field)
         values["gain_db"] = _number(data.get("gain_db"), 0.0, -20, 20)
         values["noise_gate_db"] = _number(data.get("noise_gate_db"), -45.0, -80, -10)
+        values["output_gate_db"] = _number(data.get("output_gate_db"), -34.0, -80, -10)
         denoise = data.get("denoise")
         values["denoise"] = denoise if type(denoise) is bool else False
         values["denoise_strength"] = _number(data.get("denoise_strength"), 0.6, 0, 1)

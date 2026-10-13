@@ -110,6 +110,134 @@ class LevelBar(QWidget):
                              QColor('#ffffff'))
 
 
+class MeterStrip(QWidget):
+    """Vertical dB peak meters (input and output) with a scale and peak hold.
+
+    The old strip drew the amplitude on a linear scale, so a healthy -20 dBFS looked
+    like an almost empty bar. This one is calibrated in dBFS (-60..0): green is a
+    comfortable level, yellow is loud, red is close to clipping. The thin line is the
+    peak hold of the last second.
+    """
+
+    DB_MIN = -60.0
+    TICKS = (0, -6, -12, -18, -24, -36, -48, -60)
+    GREEN_TO = -18.0
+    YELLOW_TO = -6.0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._target = [0.0, 0.0]
+        self._shown = [0.0, 0.0]
+        self._hold = [0.0, 0.0]
+        self._hold_age = [0, 0]
+        self._gate_db = None
+        self._out_gate_db = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+        self.setMinimumWidth(170)
+        self.setMinimumHeight(160)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+
+    def _fraction(self, amplitude):
+        import math
+        amplitude = max(1e-6, float(amplitude))
+        decibels = 20.0*math.log10(amplitude)
+        return max(0.0, min(1.0, (decibels - self.DB_MIN)/(0.0 - self.DB_MIN)))
+
+    def set_level(self, amplitude):
+        self._target[0] = self._fraction(amplitude)
+
+    def set_output_level(self, amplitude):
+        self._target[1] = self._fraction(amplitude)
+
+    def set_gate_db(self, decibels):
+        """Noise Gate threshold: the input bar below this level is greyed out."""
+        self._gate_db = float(decibels)
+        self.update()
+
+    def set_output_gate_db(self, decibels):
+        """Output gate threshold (None or <= -70: off): the output bar is greyed below it."""
+        self._out_gate_db = None if decibels is None or decibels <= -70 else float(decibels)
+        self.update()
+
+    def _tick(self):
+        for i in (0, 1):
+            self._shown[i] = max(self._target[i], self._shown[i] - 0.03)
+            if self._target[i] >= self._hold[i]:
+                self._hold[i] = self._target[i]
+                self._hold_age[i] = 0
+            else:
+                self._hold_age[i] += 1
+                if self._hold_age[i] > 25:
+                    self._hold[i] = max(self._target[i], self._hold[i] - 0.02)
+        self.update()
+
+    def _y(self, fraction, top, height):
+        return int(top + height*(1.0 - fraction))
+
+    def paintEvent(self, event: QPaintEvent):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        top, bottom = 8, 8
+        height = max(10, self.height() - top - bottom)
+        scale_width, bar_width, gap = 34, 28, 10
+        xs = (scale_width + 6, scale_width + 6 + bar_width + gap)
+        green, yellow, red = QColor('#2f9e6f'), QColor('#d9a21b'), QColor(DANGER)
+        zones = ((0.0, (self.GREEN_TO - self.DB_MIN)/-self.DB_MIN, green),
+                 ((self.GREEN_TO - self.DB_MIN)/-self.DB_MIN,
+                  (self.YELLOW_TO - self.DB_MIN)/-self.DB_MIN, yellow),
+                 ((self.YELLOW_TO - self.DB_MIN)/-self.DB_MIN, 1.0, red))
+        for i, x in enumerate(xs):
+            painter.fillRect(x, top, bar_width, height, QColor(TRACK))
+            level = self._shown[i]
+            for low, high, colour in zones:
+                if level <= low:
+                    continue
+                upper = min(level, high)
+                y_top = self._y(upper, top, height)
+                y_bottom = self._y(low, top, height)
+                painter.fillRect(x, y_top, bar_width, max(1, y_bottom - y_top), colour)
+            hold_y = self._y(self._hold[i], top, height)
+            if self._hold[i] > 0.0:
+                painter.fillRect(x, hold_y, bar_width, 2, QColor(TEXT))
+        used_label_y = []
+        for index, (gate_db, name) in enumerate(((self._gate_db, '入力ゲート'),
+                                                 (self._out_gate_db, '出力ゲート'))):
+            if gate_db is None:
+                continue
+            fraction = max(0.0, min(1.0, (gate_db - self.DB_MIN)/-self.DB_MIN))
+            gate_y = self._y(fraction, top, height)
+            # Below the threshold the gate keeps the sound out (input) or mutes it (output).
+            painter.fillRect(xs[index], gate_y, bar_width, top + height - gate_y,
+                             QColor(120, 128, 140, 150))
+            painter.fillRect(xs[index], gate_y, bar_width, 1, QColor(TEXT_MUTED))
+            painter.setPen(QColor(TEXT_MUTED))
+            painter.drawLine(xs[1] + bar_width + 2, gate_y, xs[1] + bar_width + 8, gate_y)
+            small = painter.font()
+            small.setPointSize(8)
+            painter.setFont(small)
+            label_y = gate_y - 15
+            while any(abs(label_y - other) < 28 for other in used_label_y):
+                label_y += 28
+            used_label_y.append(label_y)
+            painter.drawText(QRect(xs[1] + bar_width + 8, label_y, 70, 14),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
+            painter.drawText(QRect(xs[1] + bar_width + 8, label_y + 12, 70, 14),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             f'{gate_db:.0f}')
+        font = painter.font()
+        font.setPointSize(8)
+        painter.setFont(font)
+        painter.setPen(QColor(TEXT_MUTED))
+        for tick in self.TICKS:
+            y = self._y((tick - self.DB_MIN)/-self.DB_MIN, top, height)
+            painter.drawLine(scale_width, y, scale_width + 4, y)
+            painter.drawText(QRect(0, y - 7, scale_width - 2, 14),
+                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(tick))
+
+
 STATUS_BADGES = {
     'stopped': ('停止中', 'stopped'),
     'running': ('変換中', 'running'),
@@ -359,7 +487,7 @@ class Relay(QWidget):
 
     tapped = Signal()
     LABELS = (('入力', 'マイク'), ('変換', 'Koeiro'), ('出力', '通話先'))
-    HEIGHT = 96
+    HEIGHT = 46
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -387,11 +515,11 @@ class Relay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rect = self.rect()
-        margin = 30
-        radius = 13
+        margin = 44
+        radius = 7
         step = ((rect.width() - 2*margin)/(len(self.LABELS) - 1)
                 if rect.width() > 2*margin else 0)
-        centres = [QPoint(int(margin + index*step), rect.height()//2 - 8)
+        centres = [QPoint(int(margin + index*step), rect.height()//2 - 12)
                    for index in range(len(self.LABELS))]
         painter.setPen(QPen(QColor(TRACK), 2))
         for left, right in zip(centres, centres[1:]):
@@ -419,11 +547,8 @@ class Relay(QWidget):
         for index, (label, sub) in enumerate(self.LABELS):
             centre = centres[index]
             painter.setPen(QColor(TEXT if index == 1 else TEXT_MUTED))
-            painter.drawText(QRect(centre.x()-70, centre.y()+radius+6, 140, 18),
-                             Qt.AlignmentFlag.AlignCenter, label)
-            painter.setPen(QColor(TEXT_MUTED))
-            painter.drawText(QRect(centre.x()-70, centre.y()+radius+22, 140, 16),
-                             Qt.AlignmentFlag.AlignCenter, sub)
+            painter.drawText(QRect(centre.x()-44, centre.y()+radius+2, 88, 18),
+                             Qt.AlignmentFlag.AlignCenter, f'{label}  {sub}')
 
     def mousePressEvent(self, event):
         self.tapped.emit()
@@ -526,6 +651,29 @@ class Drawer(QFrame):
     def open(self):
         self.setVisible(True)
         self.raise_()
+
+    def as_popup(self, title, width=560, height=820):
+        """Open as a window of its own instead of overlapping the main window."""
+        self.popup = True
+        self.setWindowFlags(Qt.WindowType.Window)
+        self.setWindowTitle(title)
+        self.resize(width, height)
+        self.setVisible(False)
+
+    def closeEvent(self, event):
+        # Closed with the window's own button: tell the owner, like dismiss() does.
+        if getattr(self, 'popup', False) and self.isVisible():
+            self.search.clear()
+            self.closed.emit()
+        super().closeEvent(event)
+
+    def dock(self, width=440):
+        """Become a permanent side panel inside a layout instead of an overlay."""
+        self.docked = True
+        self.close_button.hide()
+        self.purpose.hide()
+        self.setFixedWidth(width)
+        self.setVisible(True)
 
     def groups(self):
         """The drawer's named groups in the order shown, each with its cards.
@@ -705,7 +853,7 @@ class VoicePanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 18, 16, 18)
         layout.setSpacing(10)
-        title = QLabel('ボイスプリセット')
+        title = QLabel('声リスト')
         title.setObjectName('railTitle')
         layout.addWidget(title)
         search_caption = QLabel('名前で絞り込む')
@@ -1076,6 +1224,7 @@ def stylesheet(asset_dir):
                   font-family: Helvetica, 'neue-haas-grotesk-display', 'Noto Sans JP',
                   YuGothic, 'Yu Gothic', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI',
                   'Segoe UI', sans-serif; font-size: 13px; font-weight: 500; }
+        QLabel, QCheckBox, QWidget#plainRow { background: transparent; }
         /* Headings and buttons speak first (din-2014 where installed, Noto Sans
            JP below it); body text stays in the Helvetica stack. */
         QLabel#drawerTitle, QLabel#bandTitle, QLabel#railTitle, QLabel#presetName,
@@ -1106,7 +1255,7 @@ def stylesheet(asset_dir):
         /* The stage repeats the same AI state large. Same tokens as the foot's
            readout, one size step up from the card headings, so the state reads
            across the room without inventing a colour. */
-        QLabel#aiBanner { font-size: 22px; font-weight: 600; color: %(muted)s; }
+        QLabel#aiBanner { font-size: 16px; font-weight: 600; color: %(muted)s; }
         QLabel#aiBanner[state="loading"] { color: %(live)s; }
         QLabel#aiBanner[state="ready"] { color: %(text)s; }
         QLabel#aiBanner[state="fallback"], QLabel#aiBanner[state="unavailable"] {
@@ -1114,7 +1263,7 @@ def stylesheet(asset_dir):
         QLabel#aiBanner[state="error"] { color: %(danger_text)s; }
         /* The live voice and route on the stage: one step below the AI banner so
            the two never compete, same text token, nothing else. */
-        QLabel#stageVoice { font-size: 17px; font-weight: 600; color: %(text)s; }
+        QLabel#stageVoice { font-size: 14px; font-weight: 600; color: %(text)s; }
         QFrame#drawer { background: %(card)s; border-left: 2px solid %(border)s; }
         QFrame#drawerTop { background: %(card)s; border-bottom: 1px solid %(border)s; }
         QLabel#drawerTitle { font-size: 17px; font-weight: 600; color: %(live)s; }
@@ -1145,7 +1294,7 @@ def stylesheet(asset_dir):
         QPushButton#indexJump:hover { color: %(text)s; }
         QPushButton#indexJump:checked { background: %(live)s; color: #ffffff; font-weight: 600; }
         QPushButton#indexJump:disabled { color: %(border_dark)s; }
-        QLabel#latencyValue { font-size: 26px; font-weight: 600; color: %(text)s; }
+        QLabel#latencyValue { font-size: 18px; font-weight: 600; color: %(text)s; }
         QLabel#stageError { color: %(warn)s; font-size: 12px; }
         QFrame#emptyState { background: %(card)s; border: 1px solid %(border)s;
                             border-radius: 12px; }
@@ -1199,10 +1348,20 @@ def stylesheet(asset_dir):
         QSlider { border: 1px solid transparent; border-radius: 4px; }
         QSlider:focus { border-color: %(live)s; }
         QPushButton#start { background: %(primary)s; border-color: %(primary)s; color: %(primary_text)s;
-                            font-weight: 600; padding: 10px 26px; border-radius: 20px; }
+                            font-weight: 600; padding: 10px 26px; border-radius: 8px; }
         QPushButton#start:focus { border-color: %(live)s; }
         QPushButton#start:disabled { background: %(pill)s; color: #9aa3b2; border-color: %(pill)s; }
-        QPushButton#stop { padding: 10px 22px; border-radius: 20px; }
+        /* Anything that cannot be used right now is washed out, not just a bit lighter. */
+        QPushButton:disabled { background: #f3f5f8; color: #b4bcc9; border-color: #e3e8ef; }
+        QComboBox:disabled { background: #f3f5f8; color: #b4bcc9; border-color: #e3e8ef; }
+        QLineEdit:disabled { background: #f3f5f8; color: #b4bcc9; border-color: #e3e8ef; }
+        QCheckBox:disabled { color: #b4bcc9; }
+        QSlider::groove:horizontal:disabled { background: #e8ecf2; }
+        QSlider::handle:horizontal:disabled { background: #f3f5f8; border-color: #e3e8ef; }
+        QPushButton#scrollHint { background: %(card)s; color: %(live)s; border: 1px solid %(live)s;
+                                 border-radius: 16px; padding: 0px; font-size: 16px; font-weight: 600; }
+        QPushButton#scrollHint:hover { background: %(live)s; color: #ffffff; }
+        QPushButton#stop { padding: 10px 22px; border-radius: 8px; }
         QLabel#warningText { color: %(warn)s; font-size: 12px; }
         QLabel#stepTitle { color: %(text)s; font-size: 16px; font-weight: 600; }
         /* Long explanations inside drawer cards read at body size, not caption
@@ -1232,3 +1391,98 @@ def stylesheet(asset_dir):
         'pill': PILL, 'track': TRACK, 'card': CARD, 'border': BORDER,
         'border_dark': BORDER_DARK, 'danger': DANGER, 'danger_text': DANGER_TEXT,
         'warn': WARN}
+
+
+class ErrorDialog(QFrame):
+    """Error details in a window of their own: selectable text and a copy button.
+
+    The old red line sat at the top of the stage, pushed the gauges down and could
+    not be selected. This is a separate, non-modal window, so the stage keeps its
+    shape and the whole text (cause, fix, device and setting details) can be copied.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Window)
+        from PySide6.QtWidgets import QHBoxLayout, QPlainTextEdit, QPushButton, QVBoxLayout
+        self.setWindowTitle('エラー')
+        self.resize(640, 420)
+        column = QVBoxLayout(self)
+        column.setContentsMargins(16, 14, 16, 14)
+        column.setSpacing(10)
+        title = QLabel('エラーが発生しました')
+        title.setObjectName('sectionTitle')
+        column.addWidget(title)
+        self.text = QPlainTextEdit()
+        self.text.setReadOnly(True)
+        column.addWidget(self.text, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.copy_button = QPushButton('すべてコピー')
+        self.copy_button.clicked.connect(self._copy)
+        row.addWidget(self.copy_button)
+        close = QPushButton('閉じる')
+        close.clicked.connect(self.close)
+        row.addWidget(close)
+        column.addLayout(row)
+
+    def _copy(self):
+        QApplication.clipboard().setText(self.text.toPlainText())
+        self.copy_button.setText('コピーしました')
+        QTimer.singleShot(1500, lambda: self.copy_button.setText('すべてコピー'))
+
+    def show_text(self, text):
+        self.text.setPlainText(text)
+        self.copy_button.setText('すべてコピー')
+        self.show()
+        self.raise_()
+
+
+class ScrollHints(QObject):
+    """Round ↑ / ↓ buttons over a scroll area when more content lies out of view.
+
+    A tall column can run past the bottom of a small screen without any sign of it.
+    The arrows appear only while there is something above or below, and a click
+    scrolls by most of a page.
+    """
+
+    def __init__(self, scroll_area):
+        super().__init__(scroll_area)
+        from PySide6.QtWidgets import QPushButton
+        self.area = scroll_area
+        viewport = scroll_area.viewport()
+        self.up = QPushButton('↑', viewport)
+        self.down = QPushButton('↓', viewport)
+        for button, step in ((self.up, -1), (self.down, 1)):
+            button.setObjectName('scrollHint')
+            button.setFixedSize(32, 32)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setToolTip('まだ上に項目があります。' if step < 0 else 'まだ下に項目があります。')
+            button.clicked.connect(lambda _=False, s=step: self._page(s))
+            button.hide()
+        bar = scroll_area.verticalScrollBar()
+        bar.valueChanged.connect(self.refresh)
+        bar.rangeChanged.connect(self.refresh)
+        viewport.installEventFilter(self)
+        QTimer.singleShot(0, self.refresh)
+
+    def _page(self, direction):
+        bar = self.area.verticalScrollBar()
+        bar.setValue(bar.value() + direction*int(self.area.viewport().height()*0.8))
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self.refresh()
+        return False
+
+    def refresh(self, *_):
+        bar = self.area.verticalScrollBar()
+        viewport = self.area.viewport()
+        width, height = viewport.width(), viewport.height()
+        x = (width - 32)//2
+        self.up.move(x, 8)
+        self.down.move(x, max(0, height - 32 - 8))
+        self.up.setVisible(bar.maximum() > 0 and bar.value() > bar.minimum() + 4)
+        self.down.setVisible(bar.maximum() > 0 and bar.value() < bar.maximum() - 4)
+        self.up.raise_()
+        self.down.raise_()
+

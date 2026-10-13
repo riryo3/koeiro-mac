@@ -9,7 +9,7 @@ import sys
 import time
 
 from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFormLayout, QHBoxLayout,
                                QCheckBox, QFrame, QLabel, QLayout, QLineEdit, QMainWindow, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSlider,
@@ -110,12 +110,14 @@ class MainWindow(QMainWindow):
                     max(self.settings.window_size[1], 780))
         # The frame is drawn by the app, not the OS: one surface from the top edge
         # down, with the window controls in the header row (DESIGN.md section 4).
-        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        if sys.platform != 'darwin':
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self._build_ui()
         self._update_meanvc_controls()
         self._restore_position()
         self.controller.set_gain(self.settings.gain_db)
         self.controller.set_gate(self.settings.noise_gate_db)
+        self.controller.set_output_gate(self.settings.output_gate_db)
         self.timer = QTimer(self)
         self.timer.setInterval(33)
         self.timer.timeout.connect(self._tick)
@@ -165,14 +167,21 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
         self.header = HeaderBar()
-        self.header.tune_clicked.connect(lambda: self._open_drawer('tune'))
+        self.header.tune_clicked.connect(self._toggle_tune_dock)
+        # The three settings columns are always on screen now; the button is redundant.
+        self.header.tune_button.hide()
         self.header.lab_clicked.connect(lambda: self._open_drawer('lab'))
         self.header.voice_clicked.connect(self._toggle_voice_panel)
         self.header.help_clicked.connect(self._show_tutorial)
         self.header.minimize_clicked.connect(self.showMinimized)
         self.header.maximize_clicked.connect(self._toggle_maximize)
         self.header.close_clicked.connect(self.close)
+        if sys.platform == 'darwin':
+            # macOS draws its own title bar and menu bar: the app header (status pill,
+            # window buttons, 声リスト / 実験 / 使い方ガイド) is replaced by them.
+            self.header.hide()
         outer.addWidget(self.header)
+        self._build_menu_bar()
         # The guide lives in the header, so there is one place to look for it.
         self.help_button = self.header.help_button
 
@@ -192,7 +201,15 @@ class MainWindow(QMainWindow):
         stage_layout.setContentsMargins(28, 18, 28, 18)
         stage_layout.setSpacing(12)
         stage_scroll.setWidget(stage_body)
-        body_row.addWidget(stage_scroll, 1)
+        # Gauges on top (sized to their content), the three settings columns below.
+        stage_scroll.setSizeAdjustPolicy(QScrollArea.SizeAdjustPolicy.AdjustToContents)
+        stage_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        centre = QWidget()
+        self.centre_col = QVBoxLayout(centre)
+        self.centre_col.setContentsMargins(0, 0, 0, 0)
+        self.centre_col.setSpacing(0)
+        self.centre_col.addWidget(stage_scroll, 0)
+        body_row.addWidget(centre, 1)
         self.centre_scroll = stage_scroll
 
         # Stage state: an error line at the top, hidden unless the engine reported one.
@@ -222,54 +239,61 @@ class MainWindow(QMainWindow):
         self.empty_state.setVisible(False)
         stage_layout.addWidget(self.empty_state)
 
-        # Input level: one horizontal strip, filled by the measured peak only.
-        level_row = QHBoxLayout()
-        level_row.setSpacing(12)
-        level_caption = QLabel('入力レベル')
-        level_caption.setObjectName('muted')
-        level_row.addWidget(level_caption)
-        self.input_bar = LevelBar(bars=1)
-        level_row.addWidget(self.input_bar, 1)
-        self.input_db = QLabel('−∞ dBFS')
+        # Left edge: vertical dB meters (input / output) with a scale and peak hold.
+        from .shell import MeterStrip
+        meter_strip = QFrame()
+        meter_strip.setObjectName('meterStrip')
+        meter_strip.setFixedWidth(196)
+        strip_layout = QVBoxLayout(meter_strip)
+        strip_layout.setContentsMargins(12, 12, 8, 12)
+        strip_layout.setSpacing(6)
+        meter_caption = QLabel('レベル（dBFS）')
+        meter_caption.setObjectName('muted')
+        strip_layout.addWidget(meter_caption)
+        self.input_bar = MeterStrip()
+        strip_layout.addWidget(self.input_bar, 1)
+        readouts = QHBoxLayout()
+        readouts.setSpacing(4)
+        self.input_db = QLabel('入力\n−∞')
         self.input_db.setObjectName('muted')
-        self.input_db.setMinimumWidth(96)
-        self.input_db.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        level_row.addWidget(self.input_db)
-        # The output level is a number, not a second strip: the stage keeps one meter.
-        self.output_db = QLabel('出力 −∞ dBFS')
+        self.input_db.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        readouts.addWidget(self.input_db)
+        self.output_db = QLabel('出力\n−∞')
         self.output_db.setObjectName('muted')
-        self.output_db.setMinimumWidth(132)
-        self.output_db.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        level_row.addWidget(self.output_db)
-        stage_layout.addLayout(level_row)
+        self.output_db.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        readouts.addWidget(self.output_db)
+        strip_layout.addLayout(readouts)
+        meter_hint = QLabel('緑=適正\n黄=大きめ\n赤=音割れ')
+        meter_hint.setObjectName('muted')
+        strip_layout.addWidget(meter_hint)
+        meter_strip.setToolTip('入力と出力のピークをdBFSで表示します。黒い線は直近1秒のピークです。\n'
+                               '話して、緑〜黄の範囲（-18〜-6 dBFS）に入るのが目安です。\n'
+                               '入力側のグレーの部分は、Noise Gateが閉じるレベルです（これ以下は変換に送られません）。')
+        body_row.insertWidget(0, meter_strip)
+        self.meter_strip = meter_strip
 
         # The three-point relay answers "where is it stuck" and toggles the transport.
         self.relay = Relay()
+        self.relay.setFixedWidth(300)
         self.relay.tapped.connect(self._toggle_transport)
-        stage_layout.addWidget(self.relay)
-
-        # One latency number, with the honest caveat underneath it.
-        latency_row = QHBoxLayout()
-        latency_row.setSpacing(12)
         self.latency_value = QLabel('-- ms')
         self.latency_value.setObjectName('latencyValue')
-        latency_row.addWidget(self.latency_value)
-        latency_caption = QLabel('概算のバッファ遅延')
-        latency_caption.setObjectName('muted')
-        latency_row.addWidget(latency_caption, 1)
-        stage_layout.addLayout(latency_row)
+        self.latency_value.setMinimumWidth(64)
+        self.latency_value.setToolTip('概算のバッファ遅延（エンドツーエンドの実測値ではありません）')
+        # The caveat lives in the tooltip above; the label stays (the engine writes to
+        # it) but takes no room.
         self.latency = QLabel()
-        self.latency.setWordWrap(True)
-        self.latency.setObjectName('muted')
-        self.latency.setTextFormat(Qt.TextFormat.PlainText)
-        stage_layout.addWidget(self.latency)
+        self.latency.setVisible(False)
 
-        # Start / Stop at the foot of the stage, never scrolled away from.
+        # Top row: mark, Start / Stop, status, AI state, relay and latency.
         transport = QFrame()
         transport.setObjectName('transportBar')
         transport_layout = QHBoxLayout(transport)
-        transport_layout.setContentsMargins(0, 10, 0, 0)
+        transport_layout.setContentsMargins(0, 4, 0, 0)
         transport_layout.setSpacing(12)
+        # The product mark no longer sits next to Start (it read as one more button);
+        # it lives at the foot of the アプリ column and in the splash.
+        self.nameplate = Nameplate()
         self.start_button = QPushButton("Start")
         self.start_button.setObjectName("start")
         self.stop_button = QPushButton("Stop")
@@ -281,49 +305,42 @@ class MainWindow(QMainWindow):
         self.stop_button.setMinimumHeight(44)
         transport_layout.addWidget(self.start_button)
         transport_layout.addWidget(self.stop_button)
-        self.status = QLabel("Status: Stopped")
+        status_column = QVBoxLayout()
+        status_column.setSpacing(2)
+        self.status = QLabel("停止中")
         self.status.setWordWrap(True)
         self.status.setObjectName("muted")
         self.status.setTextFormat(Qt.TextFormat.PlainText)
-        transport_layout.addWidget(self.status, 1)
-        stage_layout.addWidget(transport)
-        self.transport_bar = transport
-        # What Start will actually use, stated where Start is. This is the stage's
-        # own copy: the 調整 drawer's 出力音声 card reuses the same attribute name
-        # for its label, so this one keeps a distinct name and is fed beside it.
-        self.stage_voice = QLabel('停止中')
+        status_column.addWidget(self.status)
+        self.error_button = QPushButton('エラー詳細を表示（コピーできます）')
+        self.error_button.setVisible(False)
+        self.error_button.clicked.connect(self._show_error_details)
+        status_column.addWidget(self.error_button)
+        # What Start will actually use, stated where Start is.
+        self.stage_voice = QLabel('')
         self.stage_voice.setObjectName('stageVoice')
         self.stage_voice.setWordWrap(True)
         self.stage_voice.setTextFormat(Qt.TextFormat.PlainText)
-        stage_layout.addWidget(self.stage_voice)
-        # The AI state, repeated large: after Start the foot's small readout is
-        # easy to miss, so the same state gets one big line in the flow, above
-        # the stretch. Same source as the foot (set together in
-        # _update_ai_readiness), same palette tokens, no new surface.
+        status_column.addWidget(self.stage_voice)
+        transport_layout.addLayout(status_column, 1)
+        ai_column = QVBoxLayout()
+        ai_column.setSpacing(2)
         self.ai_banner = QLabel('AI · 未起動')
         self.ai_banner.setObjectName('aiBanner')
         self.ai_banner.setWordWrap(True)
         self.ai_banner.setTextFormat(Qt.TextFormat.PlainText)
-        stage_layout.addWidget(self.ai_banner)
+        ai_column.addWidget(self.ai_banner)
         self.ai_banner_note = QLabel('Startを押すとモデルを読み込みます。')
         self.ai_banner_note.setObjectName('muted')
         self.ai_banner_note.setWordWrap(True)
         self.ai_banner_note.setTextFormat(Qt.TextFormat.PlainText)
-        stage_layout.addWidget(self.ai_banner_note)
-        # The stage foot: the product mark in the room left over at the bottom
-        # right. The AI state used to sit on the left here, but it now has the
-        # big line above, and two wordings of the same fact read as disagreement.
-        stage_layout.addStretch(1)
-        foot = QFrame()
-        foot.setObjectName('stageFoot')
-        foot_row = QHBoxLayout(foot)
-        foot_row.setContentsMargins(0, 0, 0, 0)
-        foot_row.setSpacing(16)
-        foot_row.addStretch(1)
-        self.nameplate = Nameplate()
-        foot_row.addWidget(self.nameplate, 0, Qt.AlignmentFlag.AlignBottom)
-        stage_layout.addWidget(foot)
-        self.stage_foot = foot
+        ai_column.addWidget(self.ai_banner_note)
+        transport_layout.addLayout(ai_column, 1)
+        transport_layout.addWidget(self.relay)
+        transport_layout.addWidget(self.latency_value)
+        stage_layout.addWidget(transport)
+        self.transport_bar = transport
+        self.stage_foot = self.nameplate
 
         # The voice list: right-hand, and foldable to zero width.
         self.voice_panel = VoicePanel()
@@ -343,8 +360,15 @@ class MainWindow(QMainWindow):
             self.drawers[key] = drawer
             drawer.closed.connect(self._drawer_closed)
             drawer.closed.connect(self._sync_header_surfaces)
+        # 実験 opens as a window of its own: an overlay covered the voice list and the
+        # third column, and behaved unlike the always-visible 調整 columns.
+        self.drawer_lab.as_popup('実験')
         tune_layout = self.drawer_tune.body
         lab_layout = self.drawer_lab.body
+        # 調整 is not a drawer any more: its three bands become three scrolling
+        # columns under the gauges (_build_settings_columns). The empty drawer stays
+        # hidden; only the 実験 drawer still overlaps from the right.
+        self.drawer_tune.docked = True
 
         # --- 調整 ① 配線: where the sound comes in and where it goes -------------
         self.band_wire = self._band(tune_layout, '🔌 ', '①', '配線',
@@ -356,10 +380,13 @@ class MainWindow(QMainWindow):
         device_column.addWidget(device_note)
         form = QFormLayout()
         form.setVerticalSpacing(12)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         self.input_device = QComboBox()
         self.input_device.setMinimumWidth(240)
         self.input_device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.input_device.setMinimumContentsLength(12)
+        self.input_device.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         form.addRow("マイク入力", self.input_device)
         device_column.addLayout(form)
         self.route_hint = QLabel("デバイスを読み込んでいます…")
@@ -372,8 +399,9 @@ class MainWindow(QMainWindow):
         device_column.addWidget(self.refresh)
 
         output_column = self._section(self.band_wire.body, '出力先を選ぶ')
-        output_note = QLabel('変換後の音が出る場所です。Discordに流すときは仮想ケーブル'
-                             '（CABLE Input）を選びます。')
+        virtual_hint = ('仮想デバイス（BlackHole 2ch）' if sys.platform == 'darwin'
+                        else '仮想ケーブル（CABLE Input）')
+        output_note = QLabel(f'変換後の音が出る場所です。Discordなどに流すときは{virtual_hint}を選びます。')
         output_note.setObjectName('muted')
         output_note.setWordWrap(True)
         output_column.addWidget(output_note)
@@ -381,7 +409,7 @@ class MainWindow(QMainWindow):
         self.output_device.setMinimumWidth(240)
         self.output_device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.output_device.setMinimumContentsLength(12)
-        self.output_device.setToolTip('変換後の音が出る場所。Discordに流すときは仮想ケーブル（CABLE Input）を選びます。')
+        self.output_device.setToolTip(f'変換後の音が出る場所。Discordなどに流すときは{virtual_hint}を選びます。')
         output_column.addWidget(self.output_device)
         self.output_device.currentIndexChanged.connect(self._route_changed)
 
@@ -400,6 +428,11 @@ class MainWindow(QMainWindow):
                                                   round(self.settings.gain_db * 10))
         self.gate, self.gate_label = self._slider(level_section, "Noise Gate", -800, -100,
                                                  round(self.settings.noise_gate_db * 10))
+        self.out_gate, self.out_gate_label = self._slider(
+            level_section, "出力ゲート（AIの無音ノイズ対策）", -700, -100,
+            round(self.settings.output_gate_db * 10))
+        self.out_gate.valueChanged.connect(self._out_gate_changed)
+        self._out_gate_changed(self.out_gate.value())
         self.gain.valueChanged.connect(self._gain_changed)
         self.gate.valueChanged.connect(self._gate_changed)
         self._gain_changed(self.gain.value())
@@ -429,12 +462,14 @@ class MainWindow(QMainWindow):
 
         # --- 調整 ②: the voice and the way of talking -----------------------------
         sound_column = self._section(self.band_convert.body, '声と話し方を選ぶ')
-        sound_note = QLabel('誰の声にするか（右の声パネル）と、待つか待たないかを決めます。')
+        sound_note = QLabel('誰の声にするか（右の声リスト）と、待つか待たないかを決めます。')
         sound_note.setObjectName('muted')
         sound_note.setWordWrap(True)
         sound_column.addWidget(sound_note)
         mode_row = QFormLayout()
         mode_row.setVerticalSpacing(12)
+        mode_row.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        mode_row.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         self.mode = QComboBox()
         self.mode.addItem('Original / 変換なし', 'original')
         self.mode.addItem('Female DSP / 軽い加工', 'female_dsp')
@@ -446,24 +481,31 @@ class MainWindow(QMainWindow):
                           'AI Voice: 選んだ声で完全に別の声に変換\n'
                           '同時通訳: 日本語の発話を英語音声に変えて出力します（実験室②が必要）')
         self.mode.setMinimumHeight(34)
+        self.mode.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         mode_row.addRow('変換モード', self.mode)
         self.voice_quick = QComboBox()
         self.voice_quick.setMinimumHeight(34)
-        self.voice_quick.setToolTip('変換先の声です。右の声パネルと同じ選択を共有します。')
+        self.voice_quick.setToolTip('変換先の声です。右の声リストと同じ選択を共有します。')
         self.voice_quick.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.voice_quick.setMinimumContentsLength(16)
         mode_row.addRow('変換したい声', self.voice_quick)
+        # The voice list on the right is always on screen, so this combo (kept as the
+        # state holder) and the jump button below are hidden: they only duplicated it.
+        self.voice_quick_label = mode_row.labelForField(self.voice_quick)
+        self.voice_quick_label.hide()
+        self.voice_quick.hide()
         sound_column.addLayout(mode_row)
         self.voice_quick_note = QLabel('')
         self.voice_quick_note.setObjectName('muted')
         self.voice_quick_note.setWordWrap(True)
         sound_column.addWidget(self.voice_quick_note)
-        panel_jump = QPushButton('右の声パネルで選ぶ →')
+        panel_jump = QPushButton('右の声リストで選ぶ →')
         panel_jump.setObjectName('panelJump')
-        panel_jump.setToolTip('右の声パネルに移動し、検索欄にカーソルを置きます。')
+        panel_jump.setToolTip('右の声リストに移動し、検索欄にカーソルを置きます。')
         panel_jump.clicked.connect(self._focus_voice_panel)
         sound_column.addWidget(panel_jump)
         self.panel_jump = panel_jump
+        panel_jump.hide()
         self._build_voice_data()
         self._build_route_control(sound_column)
         self._build_voice_panel()
@@ -566,13 +608,15 @@ class MainWindow(QMainWindow):
         self._build_update_section(self.band_app.body)
         self._build_discord_section(self.band_app.body)
         self._build_diagnostics_section(self.band_app.body)
+        self.band_app.body.addWidget(self.nameplate, 0, Qt.AlignmentFlag.AlignRight)
 
         # --- 実験: every optional feature behind one switch -------------------------
         self._build_lab_drawer(lab_layout)
 
         # Each drawer indexes itself: the search box and the jump row read the cards
         # that ended up in it, so neither can list something that is not there.
-        self.drawer_tune.build_index()
+        self._install_slider_defaults()
+        self._build_settings_columns()
         self.drawer_lab.build_index()
 
         self.mode.setCurrentIndex(self.mode.findData(self.settings.voice_mode))
@@ -597,10 +641,120 @@ class MainWindow(QMainWindow):
         # A frameless window gets no border from the OS to drag either: the app
         # supplies the pointer and the resize start. Installed once the widgets
         # exist, so their pointer tracking is switched on with it.
-        self.edge_resize = EdgeResize(self)
+        self.edge_resize = EdgeResize(self) if sys.platform != 'darwin' else None
         self._ai_readiness_key = None
         self._schedule_first_run_tutorial(splash_played=False)
         QTimer.singleShot(8000, self._auto_update_check)
+
+    def _install_slider_defaults(self):
+        """Give each plain slider an おすすめ value (the app default) and a reset button."""
+        from src.settings.manager import AppSettings
+        d = AppSettings()
+        defaults = {
+            'gain': d.gain_db*10, 'gate': d.noise_gate_db*10, 'out_gate': d.output_gate_db*10,
+            'denoise_strength': d.denoise_strength*100, 'monitor_volume': d.monitor_volume_db*10,
+            'ai_formant_amount': d.ai_formant*10, 'ai_brightness': d.ai_brightness,
+            'ai_pitch': d.ai_pitch*8, 'ai_wait': d.ai_output_wait_ms, 'ai_fade': d.ai_crossfade_ms,
+            'tune_sib': d.ai_tune_sib_db*10, 'tune_cons': d.ai_tune_cons_db*10,
+            'tune_caps': d.ai_tune_caps*20, 'tune_floor': d.ai_tune_floor_db*10,
+            'tune_excess': d.ai_tune_excess_db*2, 'tune_mid': d.ai_tune_mid*100,
+            'tune_match': d.ai_tune_match*100, 'tune_ptrans': d.ai_tune_ptrans*100,
+            'tune_pcap': d.ai_tune_pcap*20, 'tune_level': d.ai_tune_level_db*2,
+            'pitch': d.pitch_semitones*10, 'formant': d.formant_semitones*10,
+            'brightness': d.brightness, 'wet': d.wet*100,
+        }
+        self._slider_defaults = []
+        for name, value in defaults.items():
+            slider = getattr(self, name, None)
+            if slider is None or not hasattr(slider, 'reset_button'):
+                continue
+            slider.default_value = max(slider.minimum(), min(slider.maximum(), round(value)))
+            slider.reset_button.setVisible(True)
+            slider.reset_button.setEnabled(slider.value() != slider.default_value)
+            self._slider_defaults.append(slider)
+        # One button for all of them, at the top of the 変換 column.
+        reset_all = QPushButton('すべてのスライダーをおすすめ値にする')
+        reset_all.setToolTip('音量・Noise Gate・モニター音量・AI調整などのスライダーを、'
+                             'アプリのおすすめ値にします。')
+        reset_all.clicked.connect(self._reset_all_sliders)
+        self.band_convert.body.insertWidget(0, reset_all)
+        self.reset_all_button = reset_all
+
+    def _reset_all_sliders(self):
+        # Only sliders that can change right now: the others are greyed out while the
+        # engine runs (changing them needs a restart), and forcing them raised
+        # "Stop before changing AI quality/CPU threads".
+        for slider in getattr(self, '_slider_defaults', []):
+            if slider.default_value is not None and slider.isEnabled():
+                slider.setValue(slider.default_value)
+
+    def _sync_reset_buttons(self):
+        """Each おすすめ button follows its slider: grey when locked or already at default."""
+        for slider in getattr(self, '_slider_defaults', []):
+            slider.reset_button.setEnabled(slider.isEnabled() and slider.value() != slider.default_value)
+
+    def _build_settings_columns(self):
+        """配線 / 変換 / アプリ as three side-by-side columns, each scrolling alone."""
+        columns = QWidget()
+        row = QHBoxLayout(columns)
+        row.setContentsMargins(20, 6, 20, 0)
+        row.setSpacing(18)
+        for band in (self.band_wire, self.band_convert, self.band_app):
+            self.drawer_tune.body.removeWidget(band)
+            band.layout().setContentsMargins(0, 8, 0, 4)
+            holder = QWidget()
+            holder_layout = QVBoxLayout(holder)
+            holder_layout.setContentsMargins(0, 0, 10, 16)
+            holder_layout.addWidget(band)
+            holder_layout.addStretch(1)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setWidget(holder)
+            from .shell import ScrollHints
+            ScrollHints(scroll)
+            row.addWidget(scroll, 1)
+        self.settings_columns = columns
+        self.centre_col.addWidget(columns, 1)
+
+    def _build_menu_bar(self):
+        """声リスト / 実験 / 使い方ガイド live in the menu bar instead of header buttons."""
+        self._voice_user_choice = None
+        menu_bar = self.menuBar()
+        view = menu_bar.addMenu('表示')
+        self.action_voice_list = QAction('声リスト', self)
+        self.action_voice_list.setCheckable(True)
+        self.action_voice_list.setChecked(True)
+        self.action_voice_list.setShortcut('Ctrl+L')
+        self.action_voice_list.toggled.connect(self._voice_list_menu_toggled)
+        view.addAction(self.action_voice_list)
+        lab = QAction('実験…', self)
+        lab.triggered.connect(lambda: self._open_drawer('lab'))
+        view.addAction(lab)
+        help_menu = menu_bar.addMenu('ヘルプ')
+        guide = QAction('使い方ガイド', self)
+        guide.triggered.connect(self._show_tutorial)
+        help_menu.addAction(guide)
+        self.action_lab, self.action_guide = lab, guide
+
+    def _voice_list_menu_toggled(self, checked):
+        # An explicit choice wins over the automatic fold on a narrow window.
+        self._voice_user_choice = checked
+        self._toggle_voice_panel(collapsed=not checked)
+
+    def _auto_fold_voice_list(self):
+        """A narrow window (small laptop) folds the voice list unless the user chose."""
+        if getattr(self, '_voice_user_choice', None) is not None or not hasattr(self, 'voice_panel'):
+            return
+        narrow = self.width() < 1500
+        if (not self.voice_panel.isHidden()) == narrow:
+            self._toggle_voice_panel(collapsed=narrow)
+
+    def _toggle_tune_dock(self):
+        """The 調整 button folds the three columns away or brings them back."""
+        self.settings_columns.setVisible(not self.settings_columns.isVisible())
+        self._sync_header_surfaces()
 
     def _drawer_closed(self):
         """A drawer closed itself (its 閉じる button); drop the reference to it."""
@@ -609,7 +763,7 @@ class MainWindow(QMainWindow):
 
     def _sync_header_surfaces(self):
         """Tint the one bar button whose surface is on screen."""
-        self.header.set_surface_active('tune', self._active_drawer == 'tune')
+        self.header.set_surface_active('tune', self.settings_columns.isVisible())
         self.header.set_surface_active('lab', self._active_drawer == 'lab')
         self.header.set_surface_active('voice', self.voice_panel.isVisible())
 
@@ -619,18 +773,50 @@ class MainWindow(QMainWindow):
         if drawer is not None and drawer.isVisible():
             drawer.focus_search()
 
+    def _fit_stage(self):
+        """Give the gauge area exactly its wrapped content height; columns take the rest."""
+        scroll = getattr(self, 'centre_scroll', None)
+        if scroll is None or scroll.widget() is None:
+            return
+        width = max(scroll.viewport().width(), 300)
+        height = scroll.widget().layout().totalHeightForWidth(width)
+        if height > 0:
+            scroll.setFixedHeight(height + 4)
+
     def _place_drawers(self):
         """Keep every open drawer against the right edge of the window."""
+        self._fit_stage()
         container = self.centralWidget()
         if container is None:
             return
         for drawer in self.drawers.values():
-            if drawer.isVisible():
+            if (drawer.isVisible() and not getattr(drawer, 'docked', False)
+                    and not getattr(drawer, 'popup', False)):
                 drawer.place(container)
 
     def _open_drawer(self, name):
         """Open one drawer and close the other, or close both when name is None."""
         for key, drawer in self.drawers.items():
+            if getattr(drawer, 'docked', False):
+                if key == name:
+                    self.settings_columns.setVisible(True)
+                continue
+            if getattr(drawer, 'popup', False):
+                if key == name:
+                    if drawer.isVisible() and getattr(self, '_active_drawer', None) == name:
+                        drawer.dismiss()
+                        self._active_drawer = None
+                        self._sync_header_surfaces()
+                        return
+                    if not drawer.isVisible():
+                        frame = self.frameGeometry()
+                        drawer.move(frame.right() - drawer.width() - 40, frame.top() + 70)
+                    drawer.show()
+                    drawer.raise_()
+                    drawer.activateWindow()
+                elif drawer.isVisible():
+                    drawer.dismiss()
+                continue
             if key == name:
                 drawer.open()
                 drawer.place(self.centralWidget())
@@ -645,6 +831,10 @@ class MainWindow(QMainWindow):
         if collapsed is None:
             collapsed = panel.isVisible()
         panel.set_collapsed(collapsed)
+        if hasattr(self, 'action_voice_list') and self.action_voice_list.isChecked() == collapsed:
+            self.action_voice_list.blockSignals(True)
+            self.action_voice_list.setChecked(not collapsed)
+            self.action_voice_list.blockSignals(False)
         self.header.set_voice_checked(not collapsed)
         self.header.set_surface_active('voice', not collapsed)
         self._place_drawers()
@@ -719,6 +909,12 @@ class MainWindow(QMainWindow):
             self.ai_banner.setProperty('state', state)
             self.ai_banner.style().unpolish(self.ai_banner)
             self.ai_banner.style().polish(self.ai_banner)
+            # "準備完了" needs no line of its own: show the AI state only when it is
+            # loading, unavailable or broken.
+            # The status line already says "AI 準備OK / 読み込み中"; the big line is kept
+            # only for the cases that need an explanation.
+            self.ai_banner.setVisible(state in ('error', 'unavailable', 'fallback'))
+            self.ai_banner_note.setVisible(state in ('error', 'unavailable', 'fallback'))
 
     def _translate_readiness(self):
         """The translate route's readiness, from the translation driver.
@@ -755,6 +951,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         """Open drawers follow the right edge; no widget is positioned by hand."""
         super().resizeEvent(event)
+        self._auto_fold_voice_list()
         self._place_drawers()
 
     def showEvent(self, event):
@@ -808,7 +1005,7 @@ class MainWindow(QMainWindow):
             return
         if mode == 'ai_voice':
             self.pitch_note.setText('AI Voice ではピッチは声ごとに決まっています。'
-                                    '右の声パネルで別の声を選ぶと変わります。')
+                                    '右の声リストで別の声を選ぶと変わります。')
         else:
             self.pitch_note.setText('ピッチ変更は Female DSP のときだけ使えます。')
         self.pitch_note.setVisible(True)
@@ -884,6 +1081,11 @@ class MainWindow(QMainWindow):
         # Automated runs must never block on the modal guide.
         if self._closing or self.settings.tutorial_seen or "PYTEST_CURRENT_TEST" in os.environ:
             return
+        # At most once per launch: closing the guide without "次回から表示しない" must
+        # not bring it straight back from a second schedule.
+        if getattr(self, '_tutorial_auto_shown', False):
+            return
+        self._tutorial_auto_shown = True
         self._show_tutorial()
 
     def _schedule_first_run_tutorial(self, splash_played=True):
@@ -896,7 +1098,16 @@ class MainWindow(QMainWindow):
         """
         from .splash import splash_duration_ms
         del splash_played  # the splash itself is the authority on its own length
-        QTimer.singleShot(splash_duration_ms() + 400, self._maybe_show_tutorial)
+        # One timer, restarted by every call: the window schedules once while it is
+        # built and the splash schedules again when it is revealed; only the last
+        # (correctly timed) one may fire.
+        timer = getattr(self, '_tutorial_timer', None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._maybe_show_tutorial)
+            self._tutorial_timer = timer
+        timer.start(splash_duration_ms() + 400)
 
     def _toggle_transport(self):
         if self.controller.engine.running:
@@ -2225,6 +2436,11 @@ class MainWindow(QMainWindow):
         self.use_voice = QPushButton('選択した声を使う（AI Voice）')
         self.use_voice.clicked.connect(self._use_selected_voice)
         panel.actions_layout.addWidget(self.use_voice)
+        self.delete_voice = QPushButton('選択した声を削除（ゴミ箱へ）')
+        self.delete_voice.setToolTip('自分で追加した声だけを削除します。フォルダはゴミ箱に移るので、戻せます。')
+        self.delete_voice.clicked.connect(self._delete_selected_voice)
+        self.delete_voice.setVisible(False)
+        panel.actions_layout.addWidget(self.delete_voice)
         panel.search.textChanged.connect(lambda _text: self._refresh_voice_cards())
         panel.tab_group.buttonClicked.connect(lambda _button: self._refresh_voice_cards())
         self.voice_cards = {}
@@ -2385,7 +2601,7 @@ class MainWindow(QMainWindow):
         if model not in VOICE_PROFILES:
             model = default_voice_id() or next(iter(VOICE_PROFILES), None)
         if model is None:
-            raise ValueError('利用可能なAI音声がありません。右の声パネルから声を登録してください。')
+            raise ValueError('利用可能なAI音声がありません。右の声リストから声を登録してください。')
         return AIParameters(model=model,quality=self.ai_quality.currentData(), threads=self.ai_threads.currentData(),
                             device=self.ai_device.currentData(),
                             brightness=self.ai_brightness.value(), low_cut=self.ai_low_cut.isChecked(),
@@ -2538,9 +2754,13 @@ class MainWindow(QMainWindow):
             from src.vc.models import profile
             selected = profile(self.ai_model.currentData())
         except ValueError:
-            self.voice_hint.setText('声がありません。右の声パネルから声を登録してください。')
+            if hasattr(self, 'delete_voice'):
+                self.delete_voice.setVisible(False)
+            self.voice_hint.setText('声がありません。右の声リストから声を登録してください。')
             return
         from src.vc.voice_library import metadata
+        if hasattr(self, 'delete_voice'):
+            self.delete_voice.setVisible(bool(selected.get('user_voice')) and not selected.get('standard'))
         if selected.get('standard'):
             info = metadata(self.ai_model.currentData())
             self.voice_hint.setText(
@@ -2579,6 +2799,47 @@ class MainWindow(QMainWindow):
             voices=voices)
         self.voice_dialog.finished.connect(self._voice_registration_finished)
         self.voice_dialog.open()
+
+    def _delete_selected_voice(self):
+        """Move the selected registered voice to the trash (never the bundled one)."""
+        if self._pending or self._closing or self.controller.engine.running or self.voice_dialog:
+            QMessageBox.information(self, '削除できません', '変換を止めてから削除してください。')
+            return
+        from PySide6.QtCore import QFile
+        from src.vc.models import VOICE_PROFILES, DEFAULT_VOICE_ID, refresh_user_profiles
+        from src.vc.voice_library import folder_for, is_standard
+        identifier = self.ai_model.currentData()
+        entry = VOICE_PROFILES.get(identifier)
+        if entry is None or not entry.get('user_voice') or entry.get('standard') or is_standard(str(identifier)):
+            return
+        name = entry.get('name', identifier)
+        answer = QMessageBox.question(
+            self, '声を削除', f'「{name}」を削除しますか？\nフォルダはゴミ箱に移ります（戻せます）。',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            folder = folder_for(identifier)
+            ok = QFile.moveToTrash(str(folder))
+        except (ValueError, OSError):
+            ok = False
+        if not ok:
+            QMessageBox.warning(self, '削除できませんでした', 'ゴミ箱に移せませんでした。フォルダを手で消してください。')
+            return
+        refresh_user_profiles()
+        self.ai_model.blockSignals(True)
+        self.ai_model.clear()
+        for key, value in VOICE_PROFILES.items():
+            self.ai_model.addItem(value['name'], key)
+        index = self.ai_model.findData(DEFAULT_VOICE_ID)
+        self.ai_model.setCurrentIndex(max(0, index))
+        self.ai_model.blockSignals(False)
+        self._sync_voice_combos()
+        self._refresh_voice_cards()
+        self._ai_model_changed()
+        self._capture_settings()
+        self._save_settings()
 
     def _use_selected_voice(self):
         if self._pending or self._closing or self.controller.engine.running or self.voice_dialog:
@@ -2759,6 +3020,7 @@ class MainWindow(QMainWindow):
         a label promising a control that is not there.
         """
         container = QWidget()
+        container.setObjectName('plainRow')
         column = QVBoxLayout(container)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(2)
@@ -2766,14 +3028,30 @@ class MainWindow(QMainWindow):
         row.addWidget(QLabel(name))
         row.addStretch()
         label = QLabel()
+        reset = QPushButton('おすすめ')
+        reset.setFixedSize(68, 28)
+        reset.setStyleSheet('padding: 0px 4px; font-size: 12px;')
+        reset.setToolTip('このスライダーを、おすすめの値にします。')
+        reset.setVisible(False)
         row.addWidget(label)
         column.addLayout(row)
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(minimum, maximum)
         slider.setValue(value)
-        column.addWidget(slider)
+        # The reset button sits to the right of the track, where the hand already is.
+        track_row = QHBoxLayout()
+        track_row.setSpacing(8)
+        track_row.addWidget(slider, 1)
+        track_row.addWidget(reset)
+        column.addLayout(track_row)
         layout.addWidget(container)
         slider.container = container
+        slider.reset_button = reset
+        slider.default_value = None
+        reset.clicked.connect(lambda: slider.default_value is not None
+                              and slider.setValue(slider.default_value))
+        slider.valueChanged.connect(lambda v: reset.setEnabled(
+            slider.isEnabled() and (slider.default_value is None or v != slider.default_value)))
         return slider, label
 
     @staticmethod
@@ -2784,6 +3062,7 @@ class MainWindow(QMainWindow):
     def _labelled_row(self, name, widget):
         """A caption and a control in one widget, so both hide together."""
         container = QWidget()
+        container.setObjectName('plainRow')
         column = QVBoxLayout(container)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(2)
@@ -2819,7 +3098,8 @@ class MainWindow(QMainWindow):
         utterance = spec.get('delivery') == 'utterance'
         natural = spec.get('experiment', 'none') == 'natural'
         # Home ②: the quick voice picker belongs to the AI route.
-        self.voice_quick.setVisible(ai_mode)
+        self.voice_quick.setVisible(False)
+        self.voice_quick_label.setVisible(False)
         self.voice_quick_note.setVisible(ai_mode)
         if ai_mode:
             self.voice_quick_note.setText(self._voice_summary_line())
@@ -2844,7 +3124,7 @@ class MainWindow(QMainWindow):
             self.dsp_notice.setText('')
         elif ai_mode:
             self.dsp_notice.setText('いまは「AI Voice」です。このページの加工（Pitch / Formant / '
-                                    '明るさ / EQ）はAI Voiceでは使いません。声の選択は右の声パネルで行います。')
+                                    '明るさ / EQ）はAI Voiceでは使いません。声の選択は右の声リストで行います。')
         else:
             self.dsp_notice.setText('いまは「Original（変換なし）」です。軽い加工を使うには'
                                     'Female DSPに切り替えてください。')
@@ -2885,6 +3165,10 @@ class MainWindow(QMainWindow):
         elif output is not None and device.identity == output.identity:
             self.monitor_warning.setText('⚠ メインの出力先と同じデバイスです。同じ音が二重に'
                                          '聞こえるので、ヘッドホンなど別のデバイスを選んでください。')
+        elif (sys.platform == 'darwin' and self.input_device.currentData() is not None
+              and device.identity == self.input_device.currentData().identity):
+            self.monitor_warning.setText('ℹ マイク入力と同じデバイスです。このデバイスが48kHz以外だと、Macでは'
+                                         '変換中に入力が止まります（Audio MIDI設定で48kHzに）。')
         else:
             self.monitor_warning.setText('')
         self.monitor_volume.setEnabled(device is not None)
@@ -2915,6 +3199,13 @@ class MainWindow(QMainWindow):
         if device is None:
             self.monitor_note.setText('テストできる出力デバイスがありません。')
             return
+        engine = self.controller.engine
+        if engine.running and engine.monitor_conflicts_with_input(device):
+            # Same device as the live input at another rate: Core Audio stops the main stream.
+            self.monitor_note.setText(
+                f'{device.label} は今の入力と同じ機器で、サンプルレートが違うため、変換中のテスト音は'
+                '鳴らせません（入力が止まります）。Audio MIDI設定で48kHzにするか、別の機器を選んでください。')
+            return
         self._monitor_test_busy = True
         self.monitor_test.setEnabled(False)
         self.monitor_note.setText(f'{device.label} でテスト音を再生しています…')
@@ -2944,6 +3235,15 @@ class MainWindow(QMainWindow):
     def _gate_changed(self, value):
         self.gate_label.setText(f"{value / 10:.1f} dB")
         self.controller.set_gate(value / 10)
+        if hasattr(self, 'input_bar'):
+            self.input_bar.set_gate_db(value / 10)
+
+    def _out_gate_changed(self, value):
+        db = value / 10
+        self.out_gate_label.setText('オフ' if db <= -70 else f"{db:.1f} dB")
+        self.controller.set_output_gate(db)
+        if hasattr(self, 'input_bar'):
+            self.input_bar.set_output_gate_db(db)
 
     def _denoise_changed(self, *_):
         """Live: 0 is a pass-through, so the stream never needs a restart."""
@@ -3155,6 +3455,7 @@ class MainWindow(QMainWindow):
         self.buffer.setCurrentIndex(self.buffer.findData(settings.buffer_size))
         self.gain.setValue(round(settings.gain_db * 10))
         self.gate.setValue(round(settings.noise_gate_db * 10))
+        self.out_gate.setValue(round(settings.output_gate_db * 10))
         self.denoise_toggle.setChecked(settings.denoise)
         self.denoise_strength.setValue(round(settings.denoise_strength * 100))
         self.auto_level_toggle.setChecked(settings.auto_level)
@@ -3202,7 +3503,7 @@ class MainWindow(QMainWindow):
     def _refresh_devices(self):
         self._capture_settings()
         self._pending = True
-        self.status.setText("Status: Loading devices")
+        self.status.setText("デバイス読み込み中…")
         self._set_controls(False)
         self._pending_request = self.controller.refresh_devices()
 
@@ -3260,6 +3561,10 @@ class MainWindow(QMainWindow):
         elif is_virtual(output_device, "output"):
             hint = ("App → %s ／ 通話アプリのマイク → 対応する仮想入力に設定してください。"
                     % output_device.name)
+        elif sys.platform == "darwin":
+            hint = ("仮想出力が未選択です。Macでは BlackHole 2ch を出力先に選ぶと、通話アプリのマイクへ"
+                    "流せます（未導入なら brew install --cask blackhole-2ch）。"
+                    "スピーカー出力時はハウリングに注意。")
         elif sys.platform != "win32":
             hint = ("仮想出力が未選択です。Linuxでは `sudo modprobe snd-aloop` で Loopback を"
                     "有効化し、出力先に Loopback を選ぶと通話アプリへ流せます（詳細はREADME）。"
@@ -3277,7 +3582,7 @@ class MainWindow(QMainWindow):
         self._save_settings()
         self._pending = True
         self._set_controls(False)
-        self.status.setText("Status: Starting")
+        self.status.setText("起動中…")
         self._pending_request = self.controller.start(EngineConfig(
             input_device, output_device, self.rate.currentData(), self.buffer.currentData(),
             monitor=self.monitor_toggle.isChecked(),
@@ -3289,7 +3594,7 @@ class MainWindow(QMainWindow):
             return
         self._pending = True
         self._set_controls(False)
-        self.status.setText("Status: Stopping")
+        self.status.setText("停止処理中…")
         self._pending_request = self.controller.stop()
 
     def _set_controls(self, stopped):
@@ -3325,6 +3630,7 @@ class MainWindow(QMainWindow):
         self.ai_threads.setEnabled(stopped and not self._closing and mean)
         self.ai_device.setEnabled(stopped and not self._closing and mean)
         self.ai_wait.setEnabled(stopped and not self._closing and not mean)
+        self._sync_reset_buttons()
         self.ai_quality.setEnabled(stopped and not self._closing and not mean)
         self.ai_restart.setEnabled(self.router is not None and not self._pending and not self._closing)
         self.mode.setEnabled(self.router is not None and not self._pending and not self._closing)
@@ -3367,13 +3673,22 @@ class MainWindow(QMainWindow):
                 # made while loading are not overwritten by the queued snapshot.
                 self._ai_fx_changed()
         if not self._closing:
-            suffix = f" · {snapshot.error}" if snapshot.error else ""
+            state_ja = {'Stopped': '停止中', 'Running': '変換中', 'Starting': '起動中…',
+                        'Stopping': '停止処理中…', 'Loading devices': 'デバイス読み込み中…',
+                        'Error': 'エラー', 'Restart required': '再起動が必要です'}.get(snapshot.state, snapshot.state)
+            suffix = ''
             if self.router and self.mode.currentData() == 'ai_voice':
                 bridge = self.router.ai.bridge
-                suffix += f" · AI: {bridge.status}"
-                if bridge.status != 'Ready' or self.rate.currentData() != 48000:
-                    suffix += ' · Fallback: Original'
-            self.status.setText(f"Status: {snapshot.state}{suffix}")
+                ready = bridge.status == 'Ready' and self.rate.currentData() == 48000
+                ai_ja = {'Ready': '準備OK', 'Loading': '読み込み中…', 'Starting': '読み込み中…',
+                         'Warming Up': '準備中…', 'Error': 'エラー',
+                         'Stopped': '未読み込み'}.get(bridge.status, bridge.status)
+                if bridge.status == 'Ready' and self.rate.currentData() != 48000:
+                    ai_ja = '48kHzのときだけ使えます'
+                suffix = f' · AI {ai_ja}'
+                if snapshot.state == 'Running' and not ready:
+                    suffix += '（今は無変換で出力中）'
+            self.status.setText(f"{state_ja}{suffix}")
             stopped = snapshot.state in ("Stopped", "Error")
             busy = snapshot.state in ("Starting", "Stopping", "Loading devices", "Restart required")
             self._set_controls(stopped)
@@ -3384,9 +3699,10 @@ class MainWindow(QMainWindow):
         # Visual-only decay at 30 Hz; callback just publishes current peaks.
         self._display_input = max(input_peak, self._display_input * 0.8) if snapshot.state == "Running" else 0
         self._display_output = max(output_peak, self._display_output * 0.8) if snapshot.state == "Running" else 0
-        self.input_db.setText(f"{amplitude_to_db(self._display_input):.1f} dBFS")
-        self.output_db.setText(f"出力 {amplitude_to_db(self._display_output):.1f} dBFS")
+        self.input_db.setText(f"入力\n{amplitude_to_db(self._display_input):.1f}")
+        self.output_db.setText(f"出力\n{amplitude_to_db(self._display_output):.1f}")
         self.input_bar.set_level(self._display_input)
+        self.input_bar.set_output_level(self._display_output)
         self._update_stage(snapshot)
         self._update_ai_readiness()
         self.xruns.setText(f"Underflow: {snapshot.underflows} · Overflow: {snapshot.overflows}"
@@ -3534,17 +3850,29 @@ class MainWindow(QMainWindow):
         self.relay.set_state(kind)
         self.relay.set_level(self._display_input if running else 0.0)
         self.header.set_badge(kind)
-        self.stage_error.setVisible(bool(snapshot.error))
+        # The error no longer pushes the stage around: it opens a copyable window.
+        self.stage_error.setVisible(False)
+        if self.error_button.isVisible() != bool(snapshot.error):
+            QTimer.singleShot(0, self._fit_stage)
+        self.error_button.setVisible(bool(snapshot.error))
         if snapshot.error:
-            self.stage_error.setText(
-                f'原因: {snapshot.error}\n'
-                '直し方: Stopを押し、マイクと出力先を確認してからもう一度Startを押してください。')
+            # Key on the message only: the report carries a timestamp, so comparing
+            # the report would look like a new error on every refresh.
+            if snapshot.error != getattr(self, '_error_shown', None):
+                self._error_shown = snapshot.error
+                self._error_text = self._error_report(snapshot.error)
+                self._show_error_details()
         else:
-            self.stage_error.setText('')
+            self._error_text = ''
+            self._error_shown = None
+            dialog = getattr(self, '_error_dialog', None)
+            if dialog is not None and dialog.isVisible():
+                dialog.close()
         if running:
             self.stage_voice.setText(self._describe_output())
         else:
-            self.stage_voice.setText('停止中')
+            # The header pill already says 停止中; no second copy under Status.
+            self.stage_voice.setText('')
         # The drawer's 出力音声 card reuses the same attribute name; it only
         # exists in the full build, so an injected test controller skips it.
         if hasattr(self, 'output_card_text'):
@@ -3552,6 +3880,39 @@ class MainWindow(QMainWindow):
                 self.output_card_text.setText('現在の設定: ' + self._describe_output())
             else:
                 self.output_card_text.setText('停止中 · Startで変換を開始します')
+
+    def _error_report(self, error):
+        """Cause, fix and the settings that matter, as one block of plain text."""
+        import platform
+        import time
+        from src.version import APP_VERSION
+
+        def combo(name):
+            widget = getattr(self, name, None)
+            try:
+                return widget.currentText() if widget is not None else '-'
+            except RuntimeError:
+                return '-'
+        lines = [
+            f'原因: {error}',
+            '直し方: Stopを押し、マイクと出力先を確認してからもう一度Startを押してください。',
+            '',
+            '--- 詳細（問い合わせ用） ---',
+            f'時刻: {time.strftime("%Y-%m-%d %H:%M:%S")}',
+            f'Koeiro v{APP_VERSION} / {platform.platform()} / Python {platform.python_version()}',
+            f'入力: {combo("input_device")}',
+            f'出力: {combo("output_device")}',
+            f'モニター: {combo("monitor_device")}',
+            f'Sample Rate / Buffer: {combo("rate")} / {combo("buffer")}',
+            f'モード: {combo("mode")} / 声: {combo("ai_model")}',
+        ]
+        return '\n'.join(lines)
+
+    def _show_error_details(self):
+        from .shell import ErrorDialog
+        if getattr(self, '_error_dialog', None) is None:
+            self._error_dialog = ErrorDialog(self)
+        self._error_dialog.show_text(getattr(self, '_error_text', '') or 'エラーはありません。')
 
     def _describe_output(self):
         mode = self.mode.currentData()
@@ -3616,6 +3977,7 @@ class MainWindow(QMainWindow):
                               else self.settings.discord_presence),
             sample_rate=self.rate.currentData(), buffer_size=self.buffer.currentData(),
             gain_db=self.gain.value() / 10, noise_gate_db=self.gate.value() / 10,
+            output_gate_db=self.out_gate.value() / 10,
             denoise=self.denoise_toggle.isChecked() if hasattr(self, 'denoise_toggle') else self.settings.denoise,
             denoise_strength=(self.denoise_strength.value() / 100 if hasattr(self, 'denoise_strength')
                               else self.settings.denoise_strength),
@@ -3675,6 +4037,6 @@ class MainWindow(QMainWindow):
             self._stop_presence()
             self.files.close()  # drain final save without blocking Qt
             self._closing = True
-            self.status.setText("Status: Closing · 音声デバイスを解放しています")
+            self.status.setText("終了中 · 音声デバイスを解放しています")
             self._set_controls(False)
             self.controller.shutdown(self.files.wait_closed)
