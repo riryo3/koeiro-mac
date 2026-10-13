@@ -1173,6 +1173,12 @@ class MainWindow(QMainWindow):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
             widget.update()
+        # Re-polishing makes widgets under a stale pointer position show their tooltips
+        # (and macOS may leave them up); wipe those, now and once things settle.
+        from PySide6.QtWidgets import QToolTip
+        QToolTip.hideText()
+        for delay in (50, 400, 1200):
+            QTimer.singleShot(delay, QToolTip.hideText)
 
     def _set_appearance(self, mode):
         self.settings = replace(self.settings, appearance=mode)
