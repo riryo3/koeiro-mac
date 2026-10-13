@@ -723,6 +723,13 @@ class MainWindow(QMainWindow):
             self.band_convert.body.removeWidget(formant)
             self.band_convert.body.insertWidget(self.band_convert.body.indexOf(finish), formant)
         self._apply_card_visibility()
+        # When no card of this column applies to the mode (Original, translate), say so
+        # instead of leaving an empty column.
+        self._advanced_empty = QLabel('')
+        self._advanced_empty.setObjectName('muted')
+        self._advanced_empty.setWordWrap(True)
+        self._advanced_empty.setVisible(False)
+        self.band_advanced.body.insertWidget(0, self._advanced_empty)
         self.band_advanced.body.addWidget(self.nameplate, 0, Qt.AlignmentFlag.AlignRight)
         columns = QWidget()
         row = QHBoxLayout(columns)
@@ -3252,6 +3259,13 @@ class MainWindow(QMainWindow):
                 cards[key].setVisible(show)
         if hasattr(self, 'out_gate'):
             self._container(self.out_gate).setVisible(ai_mode)
+        empty = getattr(self, '_advanced_empty', None)
+        if empty is not None:
+            nothing = not any(visible.get(k) for k in ('声の加工', '声の微調整', '抑揚補正'))
+            names = {'original': 'Original・変換なし', 'translate': '同時通訳'}
+            empty.setText(f'いまのモード（{names.get(mode, mode)}）には、詳細設定はありません。'
+                          'Female DSP や AI Voice に切り替えると、ここに調整項目が出ます。')
+            empty.setVisible(nothing)
 
     def _monitor_toggled(self, active):
         """Remember the switch and apply it live, without a Stop/Start cycle."""
