@@ -3352,7 +3352,7 @@ class MainWindow(QMainWindow):
     def _delete_selected_voice(self):
         """Move the selected registered voice to the trash (never the bundled one)."""
         if self._pending or self._closing or self.controller.engine.running or self.voice_dialog:
-            QMessageBox.information(self, '削除できません', '変換を止めてから削除してください。')
+            self._ask('削除できません', '変換を止めてから削除してください。')
             return
         from PySide6.QtCore import QFile
         from src.vc.models import VOICE_PROFILES, DEFAULT_VOICE_ID, refresh_user_profiles
@@ -3362,11 +3362,10 @@ class MainWindow(QMainWindow):
         if entry is None or not entry.get('user_voice') or entry.get('standard') or is_standard(str(identifier)):
             return
         name = entry.get('name', identifier)
-        answer = QMessageBox.question(
-            self, '声を削除', f'「{name}」を削除しますか？\nフォルダはゴミ箱に移ります（戻せます）。',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel)
-        if answer != QMessageBox.StandardButton.Yes:
+        answer = self._ask('声を削除', f'「{name}」を削除しますか？',
+                           'フォルダはゴミ箱に移ります（戻せます）。',
+                           (('ゴミ箱に移す', 'destructive'), ('やめる', 'reject')), default='やめる')
+        if answer != 'ゴミ箱に移す':
             return
         try:
             folder = folder_for(identifier)
@@ -3374,7 +3373,7 @@ class MainWindow(QMainWindow):
         except (ValueError, OSError):
             ok = False
         if not ok:
-            QMessageBox.warning(self, '削除できませんでした', 'ゴミ箱に移せませんでした。フォルダを手で消してください。')
+            self._ask('削除できませんでした', 'ゴミ箱に移せませんでした。フォルダを手で消してください。')
             return
         refresh_user_profiles()
         self.ai_model.blockSignals(True)
@@ -4685,22 +4684,43 @@ class MainWindow(QMainWindow):
         settings = replace(self.settings)
         self.files.submit('settings',lambda: self.manager.save(settings))
 
+    def _ask(self, title, text, informative='', buttons=(('OK', 'accept'),), default=None):
+        """A message box with the Koeiro icon; returns the label of the clicked button.
+
+        The system question / warning icons are dark glyphs that vanish on a dark page, so
+        every box here shows the app icon instead. `buttons` is ((label, role), ...) with
+        role 'accept', 'reject' or 'destructive'; `default` is the label that Enter and
+        Esc fall back to.
+        """
+        from PySide6.QtGui import QPixmap
+        from .splash import asset_path
+        roles = {'accept': QMessageBox.ButtonRole.AcceptRole, 'reject': QMessageBox.ButtonRole.RejectRole,
+                 'destructive': QMessageBox.ButtonRole.DestructiveRole}
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setText(text)
+        if informative:
+            box.setInformativeText(informative)
+        icon_file = asset_path('icon.png')
+        if icon_file is not None:
+            box.setIconPixmap(QPixmap(str(icon_file)).scaledToHeight(
+                56, Qt.TransformationMode.SmoothTransformation))
+        made = {label: box.addButton(label, roles[role]) for label, role in buttons}
+        if default in made:
+            box.setDefaultButton(made[default])
+            box.setEscapeButton(made[default])
+        box.exec()
+        clicked = box.clickedButton()
+        return next((label for label, button in made.items() if button is clicked), None)
+
     def _confirm_quit(self):
         """Ask before quitting while the voice is being converted (a slip of the mouse or
         Cmd+Q would silence a live call). Stopped: no question."""
         if "PYTEST_CURRENT_TEST" in os.environ or not self.controller.engine.running:
             return True
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle('終了の確認')
-        box.setText('音声変換の最中です。本当に終了しますか？')
-        box.setInformativeText('終了すると、変換が止まります。通話や配信の最中なら、声が届かなくなります。')
-        quit_button = box.addButton('終了する', QMessageBox.ButtonRole.DestructiveRole)
-        cancel = box.addButton('やめる', QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(cancel)
-        box.setEscapeButton(cancel)
-        box.exec()
-        return box.clickedButton() is quit_button
+        return self._ask('終了の確認', '音声変換の最中です。本当に終了しますか？',
+                         '終了すると、変換が止まります。通話や配信の最中なら、声が届かなくなります。',
+                         (('終了する', 'destructive'), ('やめる', 'reject')), default='やめる') == '終了する'
 
     def closeEvent(self, event: QCloseEvent):
         if self._can_close:
