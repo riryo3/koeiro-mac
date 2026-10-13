@@ -256,6 +256,13 @@ class MainWindow(QMainWindow):
         meter_caption = QLabel('レベル（dBFS）')
         meter_caption.setObjectName('muted')
         strip_layout.addWidget(meter_caption)
+        # The colour key sits at the top, under the title (it used to hang at the bottom).
+        meter_key = QLabel('<span style="color:#2f9e6f">■</span> 適正　'
+                           '<span style="color:#d9a21b">■</span> 大きめ　'
+                           '<span style="color:#dc2626">■</span> 音割れ')
+        meter_key.setObjectName('muted')
+        meter_key.setTextFormat(Qt.TextFormat.RichText)
+        strip_layout.addWidget(meter_key)
         self.input_bar = MeterStrip()
         # The meters and, to their right, a vertical Gain fader (like a mixer channel).
         meter_row = QHBoxLayout()
@@ -264,19 +271,19 @@ class MainWindow(QMainWindow):
         from .shell import Fader
         fader_column = QVBoxLayout()
         fader_column.setSpacing(4)
-        fader_title = QLabel('Gain')
+        fader_title = QLabel('Gain (dB)')
         fader_title.setObjectName('muted')
         fader_title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         fader_column.addWidget(fader_title)
         self.gain_fader = Fader(-300, 120, 0)
         fader_column.addWidget(self.gain_fader, 1, Qt.AlignmentFlag.AlignHCenter)
-        self.gain_fader_label = QLabel('+0.0 dB')
+        self.gain_fader_label = QLabel('+0.0')
         self.gain_fader_label.setObjectName('muted')
         self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         fader_column.addWidget(self.gain_fader_label)
         fader_box = QWidget()
         fader_box.setObjectName('plainRow')
-        fader_box.setFixedWidth(50)
+        fader_box.setFixedWidth(58)
         fader_box.setLayout(fader_column)
         meter_row.addWidget(fader_box)
         strip_layout.addLayout(meter_row, 1)
@@ -295,9 +302,6 @@ class MainWindow(QMainWindow):
         self.meter_reset = QPushButton('Gain・ゲートをおすすめに')
         self.meter_reset.setToolTip('Gain・入力ゲート・出力ゲートを、おすすめの値に戻します。')
         strip_layout.addWidget(self.meter_reset)
-        meter_hint = QLabel('緑=適正\n黄=大きめ\n赤=音割れ')
-        meter_hint.setObjectName('muted')
-        strip_layout.addWidget(meter_hint)
         meter_strip.setToolTip('入力と出力のピークをdBFSで表示します。黒い線は直近1秒のピークです。\n'
                                '話して、緑〜黄の範囲（-18〜-6 dBFS）に入るのが目安です。\n'
                                'グレーの境目の線（左に小さなつまみ）を上下にドラッグすると、ゲートを調整できます。\n'
@@ -738,7 +742,7 @@ class MainWindow(QMainWindow):
             fader.blockSignals(True)
             fader.setValue(value)
             fader.blockSignals(False)
-            self.gain_fader_label.setText(f'{value/10:+.1f} dB')
+            self.gain_fader_label.setText(f'{value/10:+.1f}')
         gain.valueChanged.connect(gain_to_fader)
         gain_to_fader(gain.value())
         fader.valueChanged.connect(gain.setValue)
