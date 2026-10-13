@@ -1037,6 +1037,9 @@ class VoicePanel(QFrame):
         self.cards_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         scroll.setWidget(body)
         layout.addWidget(scroll, 1)
+        # With many voices the list scrolls: round arrows show that more lies out of view.
+        self.cards_scroll = scroll
+        self.scroll_hints = ScrollHints(scroll)
         self.actions_layout = QVBoxLayout()
         self.actions_layout.setSpacing(8)
         layout.addLayout(self.actions_layout)

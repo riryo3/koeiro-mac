@@ -850,7 +850,7 @@ class MainWindow(QMainWindow):
         self._advanced_empty.setWordWrap(True)
         self._advanced_empty.setVisible(False)
         self.band_advanced.body.insertWidget(0, self._advanced_empty)
-        self.band_advanced.body.addWidget(self.nameplate, 0, Qt.AlignmentFlag.AlignRight)
+        # (the product mark now sits at the foot of the voice list, bottom right)
         # Line the three columns up: the same one-line caption area and an action row of the
         # same height at the top (a button where there is one, a spacer where not), so the
         # first cards start at the same height.
@@ -2985,6 +2985,8 @@ class MainWindow(QMainWindow):
         panel.actions_layout.addWidget(self.delete_voice)
         panel.search.textChanged.connect(lambda _text: self._refresh_voice_cards())
         panel.tab_group.buttonClicked.connect(lambda _button: self._refresh_voice_cards())
+        # The mark at the bottom right, under the voice list actions.
+        panel.layout().addWidget(self.nameplate, 0, Qt.AlignmentFlag.AlignRight)
         self.voice_cards = {}
         self._refresh_voice_cards()
         self._update_voice_info()
