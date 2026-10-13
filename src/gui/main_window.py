@@ -4685,6 +4685,23 @@ class MainWindow(QMainWindow):
         settings = replace(self.settings)
         self.files.submit('settings',lambda: self.manager.save(settings))
 
+    def _confirm_quit(self):
+        """Ask before quitting while the voice is being converted (a slip of the mouse or
+        Cmd+Q would silence a live call). Stopped: no question."""
+        if "PYTEST_CURRENT_TEST" in os.environ or not self.controller.engine.running:
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle('終了の確認')
+        box.setText('音声変換の最中です。本当に終了しますか？')
+        box.setInformativeText('終了すると、変換が止まります。通話や配信の最中なら、声が届かなくなります。')
+        quit_button = box.addButton('終了する', QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton('やめる', QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.setEscapeButton(cancel)
+        box.exec()
+        return box.clickedButton() is quit_button
+
     def closeEvent(self, event: QCloseEvent):
         if self._can_close:
             self.timer.stop()
@@ -4692,6 +4709,8 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         event.ignore()
+        if not self._closing and not self._confirm_quit():
+            return
         if not self._closing:
             if self.voice_dialog:
                 self.voice_dialog.reject()
