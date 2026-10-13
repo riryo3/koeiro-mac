@@ -115,6 +115,52 @@ class LevelBar(QWidget):
                              QColor('#ffffff'))
 
 
+def draw_cap(painter, rect, pressed=False, dim=False):
+    """A fader cap with some depth: a soft shadow, a vertical gradient body, an edge, four
+    embossed ridges (a dark line over a light one) and an indicator line in the theme colour."""
+    from PySide6.QtGui import QLinearGradient
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    if _DARK:
+        top, bottom, edge = QColor('#707a90'), QColor('#2d3442'), QColor('#0c0f14')
+        ridge_dark, ridge_light = QColor(0, 0, 0, 150), QColor(255, 255, 255, 60)
+    else:
+        top, bottom, edge = QColor('#ffffff'), QColor('#c3cad7'), QColor('#7d8aa0')
+        ridge_dark, ridge_light = QColor(0, 0, 0, 55), QColor(255, 255, 255, 230)
+    if dim:
+        top.setAlpha(150)
+        bottom.setAlpha(150)
+    # shadow under the cap
+    shadow = QRect(rect.left() + 1, rect.top() + 3, rect.width() - 2, rect.height())
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(0, 0, 0, 55))
+    painter.drawRoundedRect(shadow, 6, 6)
+    # body
+    gradient = QLinearGradient(rect.left(), rect.top(), rect.left(), rect.bottom())
+    if pressed:
+        gradient.setColorAt(0.0, bottom)
+        gradient.setColorAt(1.0, top)
+    else:
+        gradient.setColorAt(0.0, top)
+        gradient.setColorAt(1.0, bottom)
+    painter.setBrush(gradient)
+    painter.setPen(QPen(edge, 1.2))
+    painter.drawRoundedRect(rect, 6, 6)
+    # ridges
+    centre_y = rect.center().y()
+    left, right = rect.left() + 5, rect.right() - 5
+    for offset in (-7, -3.5, 3.5, 7):
+        y = centre_y + offset
+        painter.setPen(QPen(ridge_dark, 1.1))
+        painter.drawLine(left, int(y), right, int(y))
+        painter.setPen(QPen(ridge_light, 1.1))
+        painter.drawLine(left, int(y) + 1, right, int(y) + 1)
+    # indicator line
+    painter.setPen(QPen(QColor(BORDER_DARK) if dim else QColor(LIVE), 2.2))
+    painter.drawLine(rect.left() + 3, centre_y, rect.right() - 3, centre_y)
+    painter.restore()
+
+
 class MeterStrip(QWidget):
     """Vertical dB peak meters (input and output) with a scale and peak hold.
 
@@ -213,9 +259,8 @@ class MeterStrip(QWidget):
             fraction = max(0.0, min(1.0, (level - self.DB_MIN)/-self.DB_MIN))
             y = self._y(fraction, top, height)
             # The handle sits on the outer edge of each bar: left for input, right for output.
-            low, high = ((xs[0] - 18, xs[0] + bar_width + 4) if index == 0
-                         else (xs[1] - 4, xs[1] + bar_width + 18))
-            if low <= pos.x() <= high and abs(pos.y() - y) <= self.GRAB + 3:
+            # The cap sits on the bar itself, a few pixels wider than it.
+            if xs[index] - 6 <= pos.x() <= xs[index] + bar_width + 6 and abs(pos.y() - y) <= self.GRAB + 3:
                 return index
         return None
 
@@ -322,6 +367,7 @@ class MeterStrip(QWidget):
             hold_y = self._y(self._hold[i], top, height)
             if self._hold[i] > 0.0:
                 painter.fillRect(x, hold_y, bar_width, 2, QColor(TEXT))
+        self._cap_later = []
         small = painter.font()
         small.setPointSize(7)
         # The number sits beside the bar it belongs to (left = input, right = output), so the
@@ -339,20 +385,23 @@ class MeterStrip(QWidget):
             painter.setPen(QColor(TEXT_MUTED))
             painter.setBrush(QColor(TEXT_MUTED))
             painter.setFont(small)
-            if index == 0:       # input gate: thumb and number on the left
-                self._thumb(painter, QRect(xs[0] - 15, gate_y - 10, 17, 21), self._drag == 0)
-                area = QRect(0, gate_y - 15, xs[0] - 18, 28)
+            cap = QRect(xs[index] - 5, gate_y - 10, bar_width + 10, 21)
+            if index == 0:       # input gate: cap on the bar, number on the left
+                self._cap_later.append((cap, self._drag == 0, False))
+                area = QRect(0, gate_y - 15, xs[0] - 10, 28)
                 align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            else:                # output gate: thumb and number on the right
-                self._thumb(painter, QRect(xs[1] + bar_width - 2, gate_y - 10, 17, 21), self._drag == 1)
-                left = xs[1] + bar_width + 18
+            else:                # output gate: cap on the bar, number on the right
+                self._cap_later.append((cap, self._drag == 1, False))
+                left = xs[1] + bar_width + 10
                 area = QRect(left, gate_y - 15, max(10, self.width() - left), 28)
                 align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             painter.drawText(area, align, f'{name}\n{gate_db:.0f} dB')
         if self._out_gate_db is None:
             # Output gate off: a dim handle rests at the floor so it can be dragged up.
             floor_y = self._y(0.0, top, height)
-            self._thumb(painter, QRect(xs[1] + bar_width - 2, floor_y - 10, 17, 21), self._drag == 1, dim=True)
+            self._cap_later.append((QRect(xs[1] - 5, floor_y - 10, bar_width + 10, 21), self._drag == 1, True))
+        for cap_rect, active, dim in self._cap_later:
+            draw_cap(painter, cap_rect, active, dim)
         # The dB scale is shared and sits between the two bars.
         font = painter.font()
         font.setPointSize(8)
@@ -1640,7 +1689,7 @@ def stylesheet(asset_dir):
         QSlider::sub-page:vertical { background: %(groove)s; border-radius: 4px; }
         QSlider::add-page:vertical { background: %(live)s; border-radius: 4px; }
         QSlider::handle:vertical { background: %(handle)s; border: 2px solid %(live)s;
-                                   height: 22px; width: 30px; margin: 0 -11px; border-radius: 6px; }
+                                   height: 24px; width: 32px; margin: 0 -12px; border-radius: 6px; }
         QSlider::handle:vertical:hover { background: %(press_light)s; }
         QSlider::handle:vertical:pressed { background: %(press_light)s; }
         QSlider::groove:horizontal { background: %(track)s; height: 5px; border-radius: 2px; }
@@ -1752,6 +1801,7 @@ class Fader(StepSlider):
         super().__init__(Qt.Orientation.Vertical, parent)
         self.setRange(minimum, maximum)
         self.default_value = default
+        self.setFixedWidth(38)    # room for the 32 px cap (a vertical slider is only as wide as its groove)
         self.setValue(default)
         self.setToolTip('上下にドラッグして音量（Gain）を調整します。ダブルクリックで 0 dB に戻ります。')
 
@@ -1785,16 +1835,9 @@ class Fader(StepSlider):
         painter.setPen(QPen(QColor(TEXT_MUTED), 1.5))
         painter.drawLine(centre - 10, zero_y, centre - 6, zero_y)
         painter.drawLine(centre + 6, zero_y, centre + 10, zero_y)
-        # the cap: big, rounded, themed edge, three grip lines
-        cap = QRect(centre - 15, handle.center().y() - 11, 30, 22)
+        # the cap: the shared fader-cap painter (depth, ridges, theme-coloured indicator line)
         pressed = bool(option.state & QStyle.StateFlag.State_Sunken)
-        painter.setPen(QPen(QColor(LIVE), 2))
-        painter.setBrush(QColor(LIVE) if pressed else QColor(HANDLE))
-        painter.drawRoundedRect(cap.adjusted(1, 1, -1, -1), 6, 6)
-        painter.setPen(QPen(QColor(HANDLE if pressed else LIVE), 1.6))
-        for offset in (-4, 0, 4):
-            painter.drawLine(cap.center().x() - 7, cap.center().y() + offset,
-                             cap.center().x() + 7, cap.center().y() + offset)
+        draw_cap(painter, QRect(centre - 16, handle.center().y() - 12, 32, 24), pressed)
 
 
 class ScrollHints(QObject):
