@@ -302,6 +302,8 @@ class MainWindow(QMainWindow):
         strip_layout.addLayout(readouts)
         # A visible reset under the meters: a double click alone is hard to discover.
         self.meter_reset = QPushButton('Gain・ゲートをおすすめに')
+        self.meter_reset.setMinimumHeight(44)
+        self.meter_reset.setStyleSheet('font-size: 14px; font-weight: 600;')
         self.meter_reset.setToolTip('Gain・入力ゲート・出力ゲートを、おすすめの値に戻します。')
         strip_layout.addWidget(self.meter_reset)
         meter_strip.setToolTip('入力と出力のピークをdBFSで表示します。黒い線は直近1秒のピークです。\n'
@@ -345,6 +347,14 @@ class MainWindow(QMainWindow):
         self.stop_button.setMinimumHeight(44)
         transport_layout.addWidget(self.start_button)
         transport_layout.addWidget(self.stop_button)
+        # Mute: silences the output and the monitor at once (M key / 操作 menu).
+        self.mute_button = QPushButton('ミュート')
+        self.mute_button.setObjectName('mute')
+        self.mute_button.setCheckable(True)
+        self.mute_button.setMinimumHeight(44)
+        self.mute_button.setToolTip('出力とモニターの音を、すぐに消します（Mキー）。もう一度押すと、戻ります。')
+        self.mute_button.toggled.connect(self._mute_toggled)
+        transport_layout.addWidget(self.mute_button)
         status_column = QVBoxLayout()
         status_column.setSpacing(2)
         self.status = QLabel("停止中")
@@ -884,6 +894,16 @@ class MainWindow(QMainWindow):
         """声リスト / 実験 / 使い方ガイド live in the menu bar instead of header buttons."""
         self._voice_user_choice = None
         menu_bar = self.menuBar()
+        control = menu_bar.addMenu('操作')
+        self.action_toggle = QAction('Start / Stop', self)
+        self.action_toggle.setShortcut('Space')
+        self.action_toggle.triggered.connect(self._toggle_transport_shortcut)
+        control.addAction(self.action_toggle)
+        self.action_mute = QAction('ミュート', self)
+        self.action_mute.setCheckable(True)
+        self.action_mute.setShortcut('M')
+        self.action_mute.toggled.connect(lambda checked: self.mute_button.setChecked(checked))
+        control.addAction(self.action_mute)
         view = menu_bar.addMenu('表示')
         self.action_voice_list = QAction('声リスト', self)
         self.action_voice_list.setCheckable(True)
@@ -1077,6 +1097,23 @@ class MainWindow(QMainWindow):
         """Combo index for a saved mode; a mode that is not offered (translate) becomes AI Voice."""
         index = self.mode.findData(value)
         return index if index >= 0 else max(0, self.mode.findData('ai_voice'))
+
+    def _mute_toggled(self, muted):
+        self.controller.set_mute(muted)
+        self.mute_button.setText('ミュート中' if muted else 'ミュート')
+        action = getattr(self, 'action_mute', None)
+        if action is not None and action.isChecked() != muted:
+            action.blockSignals(True)
+            action.setChecked(muted)
+            action.blockSignals(False)
+
+    def _toggle_transport_shortcut(self):
+        """Space: Start / Stop. Not while the guide or a dialog has the keyboard."""
+        if getattr(self, '_guide_open', False) or QApplication.activeModalWidget() is not None:
+            return
+        if QApplication.activeWindow() is not self:
+            return
+        self._toggle_transport()
 
     def _toggle_tune_dock(self):
         """The 調整 button folds the three columns away or brings them back."""
@@ -4085,6 +4122,8 @@ class MainWindow(QMainWindow):
                 suffix = f' · AI {ai_ja}'
                 if snapshot.state == 'Running' and not ready:
                     suffix += '（今は無変換で出力中）'
+            if getattr(self, 'mute_button', None) is not None and self.mute_button.isChecked():
+                suffix += ' · ミュート中'
             self.status.setText(f"{state_ja}{suffix}")
             stopped = snapshot.state in ("Stopped", "Error")
             busy = snapshot.state in ("Starting", "Stopping", "Loading devices", "Restart required")

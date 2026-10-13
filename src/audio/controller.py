@@ -148,6 +148,10 @@ class AudioController:
     def set_gain(self, db):
         self.engine.chain.gain.set_gain(db)
 
+    def set_mute(self, muted):
+        """Live: silence the output (and the monitor) without stopping the stream."""
+        self.engine.muted = bool(muted)
+
     def set_gate(self, db):
         self.engine.chain.gate.set_threshold(db)
 

@@ -56,6 +56,9 @@ class AudioEngine:
         self.monitor_player = None
         self.monitor_error = ""
         self.monitor_gain_db = 0.0
+        # Mute: silences everything after the chain (output and monitor) with a short ramp.
+        self.muted = False
+        self._mute_gain = 1.0
         self._stream = None
         self.config = None
         self.input_peak = self.output_peak = 0.0
@@ -258,6 +261,15 @@ class AudioEngine:
             if self.translate_tap.active:
                 self.translate_tap.offer(audio)
             audio = self.chain.process(audio, self.config.sample_rate)
+            target = 0.0 if self.muted else 1.0
+            if target == self._mute_gain:
+                if target == 0.0:
+                    audio.fill(0.0)
+            else:
+                # Fade over this block so switching does not click.
+                ramp = np.linspace(self._mute_gain, target, len(audio), dtype=np.float32)
+                np.multiply(audio, ramp.reshape(-1, 1), out=audio)
+                self._mute_gain = target
             self.output_peak = peak_level(audio)
             if self.monitor_player is not None and self.monitor_player.running:
                 self.monitor_tap.offer(audio[:, 0])

@@ -1487,6 +1487,8 @@ def stylesheet(asset_dir):
         QPushButton#start:focus { border-color: %(live)s; }
         QPushButton#start:pressed { background: %(press_dark)s; border-color: %(press_dark)s;
                                     padding-top: 11px; padding-bottom: 9px; }
+        QPushButton#mute:checked { background: %(danger)s; border-color: %(danger)s; color: #ffffff; }
+        QPushButton#mute:checked:pressed { background: %(danger_text)s; border-color: %(danger_text)s; }
         QPushButton#stop:pressed { background: %(press_light)s; border-color: %(live)s;
                                    padding-top: 11px; padding-bottom: 9px; }
         QPushButton#start:disabled { background: %(pill)s; color: #9aa3b2; border-color: %(pill)s; }
