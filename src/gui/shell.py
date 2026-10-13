@@ -1550,7 +1550,8 @@ def stylesheet(asset_dir):
         QLabel#plateFallback { font-size: 15px; font-weight: 600; color: %(muted)s; }
         /* The wordmark is white art for dark grounds: on the light foot it sits
            on a navy chip instead of vanishing into the page. */
-        QLabel#plateLogo { background: %(live)s; border-radius: 6px; padding: 2px 6px; }
+        /* The wordmark is brand artwork drawn for the original navy: it keeps that navy under every theme. */
+        QLabel#plateLogo { background: #284b7d; border-radius: 6px; padding: 2px 6px; }
         /* The stage repeats the same AI state large. Same tokens as the foot's
            readout, one size step up from the card headings, so the state reads
            across the room without inventing a colour. */
