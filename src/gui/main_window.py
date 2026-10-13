@@ -461,7 +461,7 @@ class MainWindow(QMainWindow):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         self.input_device = QComboBox()
-        self.input_device.setMinimumWidth(240)
+        self.input_device.setMinimumWidth(110)
         self.input_device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.input_device.setMinimumContentsLength(12)
         self.input_device.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -517,9 +517,9 @@ class MainWindow(QMainWindow):
         self._gate_changed(self.gate.value())
         # Optional spectral noise reduction, applied live like the gate. It is off by
         # default because it reshapes the voice; the strength is a user choice.
-        self.denoise_toggle = QCheckBox('ノイズ除去（定常ノイズを抑える・実験的）')
+        self.denoise_toggle = QCheckBox('ノイズ除去（実験的）')
         self.denoise_toggle.setChecked(self.settings.denoise)
-        self.denoise_toggle.setToolTip('ファン・サー音などの定常ノイズを抑えます。\n'
+        self.denoise_toggle.setToolTip('ファン・サー音などの定常ノイズを抑えます（実験的）。\n'
                                        '声質が変わり得るため既定はOFF。停止中でも切替できます。')
         self.denoise_toggle.toggled.connect(self._denoise_changed)
         level_section.addWidget(self.denoise_toggle)
@@ -530,9 +530,9 @@ class MainWindow(QMainWindow):
         self._denoise_changed()
         # Optional input levelling, applied live like the gate. Small voices
         # come up to the level the model grips best; silence is never boosted.
-        self.auto_level_toggle = QCheckBox('音量の自動均一化（小声を持ち上げる）')
+        self.auto_level_toggle = QCheckBox('音量の自動均一化')
         self.auto_level_toggle.setChecked(self.settings.auto_level)
-        self.auto_level_toggle.setToolTip('入力を一定の音量にそろえます（無音は上げません）。\n'
+        self.auto_level_toggle.setToolTip('小さな声を持ち上げて、入力を一定の音量にそろえます（無音は上げません）。\n'
                                           '既定はOFF。停止中でも変換中でも切替できます。')
         self.auto_level_toggle.toggled.connect(self._auto_level_changed)
         level_section.addWidget(self.auto_level_toggle)
@@ -602,7 +602,7 @@ class MainWindow(QMainWindow):
         monitor_heading.setObjectName('sectionTitle')
         monitor_column.addWidget(monitor_heading)
         self.monitor_device = QComboBox()
-        self.monitor_device.setMinimumWidth(240)
+        self.monitor_device.setMinimumWidth(110)    # a narrow window shortens the name, it must not widen the column
         self.monitor_device.setToolTip("モニター音声を鳴らすデバイス。マイクや出力先とは別のもの"
                                        "（ヘッドホン等）を選んでください。")
         self.monitor_toggle = QPushButton("Monitor OFF")
@@ -633,7 +633,7 @@ class MainWindow(QMainWindow):
         self.monitor_warning.setObjectName('warningText')
         monitor_column.addWidget(self.monitor_warning)
         # macOS only: jump to the app where a device's sample rate is set.
-        self.audio_midi_button = QPushButton('Audio MIDI設定を開く（機器を選んで 48000 Hz に）')
+        self.audio_midi_button = QPushButton('Audio MIDI設定を開く')
         self.audio_midi_button.setToolTip('開いたら、左の一覧で機器を選び、右の「フォーマット」を\n'
                                           '48000 Hz にします（入力・出力の両方）。')
         self.audio_midi_button.clicked.connect(self._open_audio_midi_setup)
@@ -674,8 +674,9 @@ class MainWindow(QMainWindow):
         self.buffer.setCurrentIndex(self.buffer.findData(self.settings.buffer_size))
         options.addRow("Buffer", self.buffer)
         device_details.addLayout(options)
-        self.recommended = QPushButton('推奨設定を適用（48 kHz / 256 / 標準ボイス）')
-        self.recommended.setToolTip('このPCで実測した推奨値にそろえます。デバイスの選択は変わりません。')
+        self.recommended = QPushButton('推奨設定を適用')
+        self.recommended.setToolTip('48 kHz / 256 / 標準ボイスの、このPCで実測した推奨値にそろえます。\n'
+                                    'デバイスの選択は変わりません。')
         self.recommended.clicked.connect(self._apply_recommended)
         device_details.addWidget(self.recommended)
 
@@ -820,7 +821,7 @@ class MainWindow(QMainWindow):
         # The refresh covers every device list (mic, output, monitor), so it sits at the
         # top of the 配線 column like the all-sliders button does in 変換.
         self.band_wire.body.removeWidget(self.refresh)
-        self.refresh.setText('デバイス一覧を更新（マイク・出力先・モニター）')
+        self.refresh.setText('デバイス一覧を更新')
         self.refresh.setToolTip('マイク・出力先・モニターの一覧を読み直します。'
                                 'デバイスをつないだ・外したあとに押してください。')
         self.band_wire.body.insertWidget(0, self.refresh)
@@ -915,8 +916,11 @@ class MainWindow(QMainWindow):
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             scroll.setWidget(holder)
+            for heading in holder.findChildren(QLabel):
+                if heading.objectName() in ('sectionTitle', 'stepTitle', 'bandTitle'):
+                    heading.setWordWrap(True)      # a long title must not widen the column
             from .shell import ScrollHints
             ScrollHints(scroll)
             row.addWidget(scroll, 1)
