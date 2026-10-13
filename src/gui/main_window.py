@@ -3237,6 +3237,10 @@ class MainWindow(QMainWindow):
                 low_cut=parameters.low_cut, limiter=parameters.limiter, post_fx=parameters.post_fx,pitch=parameters.pitch)
 
     def _tune_changed(self, *_):
+        self._update_tune_labels()
+        self._ai_structure_changed()
+
+    def _update_tune_labels(self):
         self.tune_sib_label.setText(f'{self.tune_sib.value()/10:.1f} dB')
         self.tune_cons_label.setText(f'{self.tune_cons.value()/10:.1f} dB')
         self.tune_caps_label.setText(f'{self.tune_caps.value()/20:.2f}倍')
@@ -3247,9 +3251,14 @@ class MainWindow(QMainWindow):
         self.tune_ptrans_label.setText(f'{self.tune_ptrans.value()/100:.2f}')
         self.tune_pcap_label.setText(f'{self.tune_pcap.value()/20:.2f} st')
         self.tune_level_label.setText(f'{self.tune_level.value()/2:.1f} dB')
-        self._ai_structure_changed()
 
-    def _reset_tune(self):
+    def _reset_tune(self, apply=True):
+        """Put the 声の調整 sliders back to their defaults.
+
+        `apply=False` only sets the values: _ai_structure_changed() starts a request that
+        leaves the window "pending", and anything that checks _pending afterwards (this
+        method, _apply_natural_voice) would then silently do nothing.
+        """
         if self._pending or self.controller.engine.running:
             return
         for slider, default in ((self.tune_sib, 30), (self.tune_cons, 30), (self.tune_caps, 20),
@@ -3262,7 +3271,9 @@ class MainWindow(QMainWindow):
         self.tune_combined.blockSignals(True)
         self.tune_combined.setChecked(True)
         self.tune_combined.blockSignals(False)
-        self._tune_changed()
+        self._update_tune_labels()
+        if apply:
+            self._ai_structure_changed()
 
     def _ai_structure_changed(self, *_):
         if self.router:
@@ -3737,8 +3748,10 @@ class MainWindow(QMainWindow):
             return
         mode = self.mode.currentData()
         if mode == 'ai_voice':
+            # Set the tuning sliders first, then apply everything in one go: both steps
+            # end by sending the settings, and the first send marks the window pending.
+            self._reset_tune(apply=False)
             self._apply_natural_voice()   # standard voice + the app's recommended AI settings
-            self._reset_tune()
         elif mode == 'female_dsp':
             for slider in (self.pitch, self.formant, self.brightness, self.wet):
                 if slider.default_value is not None:
