@@ -554,6 +554,13 @@ class MainWindow(QMainWindow):
         self.monitor_warning.setWordWrap(True)
         self.monitor_warning.setObjectName('warningText')
         monitor_column.addWidget(self.monitor_warning)
+        # macOS only: jump to the app where a device's sample rate is set.
+        self.audio_midi_button = QPushButton('Audio MIDI設定を開く（機器を選んで 48000 Hz に）')
+        self.audio_midi_button.setToolTip('開いたら、左の一覧で機器を選び、右の「フォーマット」を\n'
+                                          '48000 Hz にします（入力・出力の両方）。')
+        self.audio_midi_button.clicked.connect(self._open_audio_midi_setup)
+        self.audio_midi_button.setVisible(False)
+        monitor_column.addWidget(self.audio_midi_button)
         self.monitor_note = QLabel('モニターは変換後の音声を別デバイスで聴く機能です。多少の途切れは仕様です。')
         self.monitor_note.setWordWrap(True)
         self.monitor_note.setObjectName('muted')
@@ -862,6 +869,11 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def _open_audio_midi_setup(self):
+        """Open macOS's Audio MIDI Setup, where a device's sample rate is changed."""
+        from PySide6.QtCore import QProcess
+        QProcess.startDetached('open', ['-a', 'Audio MIDI Setup'])
 
     def _show_about(self):
         """Credits: the original project, its license and the models this app builds on."""
@@ -3364,6 +3376,7 @@ class MainWindow(QMainWindow):
         self.monitor_volume_label.setText(f'{self.monitor_volume.value()/10:+.1f} dB')
         device = self.monitor_device.currentData()
         output = self.output_device.currentData() if hasattr(self, 'output_device') else None
+        self.audio_midi_button.setVisible(False)
         if device is None:
             self.monitor_warning.setText('モニターに使える出力デバイスがありません。')
         elif output is not None and device.identity == output.identity:
@@ -3373,6 +3386,7 @@ class MainWindow(QMainWindow):
               and device.identity == self.input_device.currentData().identity):
             self.monitor_warning.setText('ℹ マイク入力と同じデバイスです。このデバイスが48kHz以外だと、Macでは'
                                          '変換中に入力が止まります（Audio MIDI設定で48kHzに）。')
+            self.audio_midi_button.setVisible(True)
         else:
             self.monitor_warning.setText('')
         self.monitor_volume.setEnabled(device is not None)
@@ -3930,6 +3944,8 @@ class MainWindow(QMainWindow):
                 "（多少は仕様です。ヘッドホン推奨）")
         elif engine.monitor_error:
             self.monitor_note.setText(f"Monitorを開始できませんでした：{engine.monitor_error}")
+            if 'Audio MIDI' in engine.monitor_error:
+                self.audio_midi_button.setVisible(True)
         elif self.monitor_toggle.isChecked() and self.controller.engine.running:
             self.monitor_note.setText('Monitorを開始しています…')
         else:
