@@ -908,6 +908,7 @@ class MainWindow(QMainWindow):
         self.action_mute.setShortcut('M')
         self.action_mute.toggled.connect(lambda checked: self.mute_button.setChecked(checked))
         control.addAction(self.action_mute)
+        self.voice_menu = menu_bar.addMenu('声')
         view = menu_bar.addMenu('表示')
         self.action_voice_list = QAction('声リスト', self)
         self.action_voice_list.setCheckable(True)
@@ -952,6 +953,7 @@ class MainWindow(QMainWindow):
         check_update.setEnabled(UPDATES_SUPPORTED)
         help_menu.addAction(check_update)
         self.action_lab, self.action_guide = lab, guide
+        self._rebuild_voice_menu()
 
     def _open_card_dialog(self, key, title, names, width):
         """Show cards of the old アプリ column in a window of their own (built on first use)."""
@@ -1101,6 +1103,72 @@ class MainWindow(QMainWindow):
         """Combo index for a saved mode; a mode that is not offered (translate) becomes AI Voice."""
         index = self.mode.findData(value)
         return index if index >= 0 else max(0, self.mode.findData('ai_voice'))
+
+    def _favorites(self):
+        """Starred voices that still exist, in the order they were starred."""
+        from src.vc.models import VOICE_PROFILES
+        return [key for key in self.settings.favorite_voices if key in VOICE_PROFILES]
+
+    def _toggle_favorite(self, key):
+        favorites = self._favorites()
+        if key in favorites:
+            favorites.remove(key)
+        else:
+            favorites.append(key)
+        self.settings = replace(self.settings, favorite_voices=tuple(favorites))
+        self._save_settings()
+        self._refresh_voice_cards()
+        self._rebuild_voice_menu()
+
+    def _show_favorites(self):
+        """F: bring up the お気に入り tab of the voice list (again: back to すべて)."""
+        panel = self.voice_panel
+        if panel.isHidden():
+            self._voice_user_choice = True
+            self._toggle_voice_panel(collapsed=False)
+        target = 'all' if panel.tabs['favorite'].isChecked() else 'favorite'
+        panel.tabs[target].setChecked(True)
+        self._refresh_voice_cards()
+
+    def _select_favorite(self, key):
+        """Keys 1-9, 0 (and the 声 menu): switch to a favourite. Stopped only."""
+        if self._pending or self._closing or self.controller.engine.running or self.voice_dialog:
+            self.voice_note.setText('声の切り替えは、停止中にできます。いったんStopしてください。')
+            QTimer.singleShot(4000, self._update_voice_info)
+            return
+        self._select_voice_key(key)
+
+    def _rebuild_voice_menu(self):
+        """The 声 menu: the F toggle, then the favourites numbered 1-9, 0."""
+        from src.vc.models import VOICE_PROFILES
+        menu = getattr(self, 'voice_menu', None)
+        if menu is None:
+            return
+        menu.clear()
+        show = QAction('お気に入りを表示（もう一度で、すべてに戻る）', self)
+        show.setShortcut('F')
+        show.triggered.connect(self._show_favorites)
+        menu.addAction(show)
+        stars = QAction('お気に入りに入れる／外す: 声のカードの ☆ をクリック', self)
+        stars.setEnabled(False)
+        menu.addAction(stars)
+        menu.addSeparator()
+        favorites = self._favorites()
+        if not favorites:
+            empty = QAction('（お気に入りはまだありません）', self)
+            empty.setEnabled(False)
+            menu.addAction(empty)
+        for position, key in enumerate(favorites[:10]):
+            slot = '1234567890'[position]
+            name = VOICE_PROFILES[key].get('name', key)
+            action = QAction(f'{slot}　{name}', self)
+            action.setShortcut(slot)
+            action.triggered.connect(lambda _checked=False, voice=key: self._select_favorite(voice))
+            menu.addAction(action)
+        note = QAction('キー 1〜9・0 の切り替えは、停止中だけ使えます', self)
+        note.setEnabled(False)
+        menu.addSeparator()
+        menu.addAction(note)
 
     def _mute_toggled(self, muted):
         self.controller.set_mute(muted)
@@ -2844,6 +2912,9 @@ class MainWindow(QMainWindow):
             profile = VOICE_PROFILES[key]
             standard = bool(profile.get('standard')) or key == DEFAULT_VOICE_ID
             user = bool(profile.get('user_voice')) and not standard
+            favorites = self._favorites()
+            if tab == 'favorite' and key not in favorites:
+                continue
             if tab == 'standard' and not standard:
                 continue
             if tab == 'user' and not user:
@@ -2854,6 +2925,9 @@ class MainWindow(QMainWindow):
             sub = '標準ボイス（同梱）' if standard else ('追加した声' if user else '声')
             card = VoiceCard(key, name, sub)
             card.selected.connect(self._select_voice_key)
+            card.favoriteToggled.connect(self._toggle_favorite)
+            position = favorites.index(key) if key in favorites else -1
+            card.set_favorite(position >= 0, ('1234567890'[position] if 0 <= position < 10 else None))
             card.set_selected(key == current)
             box.addWidget(card)
             self.voice_cards[key] = card
@@ -3211,6 +3285,7 @@ class MainWindow(QMainWindow):
         self.ai_model.blockSignals(False)
         self._sync_voice_combos()
         self._refresh_voice_cards()
+        self._rebuild_voice_menu()
         self._ai_model_changed()
         self._capture_settings()
         self._save_settings()
@@ -3242,6 +3317,7 @@ class MainWindow(QMainWindow):
             self.ai_model.blockSignals(False)
             self._sync_voice_combos()
             self._refresh_voice_cards()
+            self._rebuild_voice_menu()
             self._ai_model_changed()
             self._capture_settings()
             self._save_settings()

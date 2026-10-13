@@ -46,6 +46,8 @@ class AppSettings:
     output_gate_db: float = -34.0
     # Theme colour (accent): buttons, selected tabs, Start. Any #rrggbb.
     theme_color: str = '#284b7d'
+    # Favourite voices (ids, in the order they were starred); the first ten get keys 1-9, 0.
+    favorite_voices: tuple = ()
     # Off by default: the spectral stage is a user choice, not the shipped route.
     denoise: bool = False
     denoise_strength: float = 0.6
@@ -150,6 +152,11 @@ class AppSettings:
         values["gain_db"] = _number(data.get("gain_db"), 0.0, -20, 20)
         values["noise_gate_db"] = _number(data.get("noise_gate_db"), -45.0, -80, -10)
         values["output_gate_db"] = _number(data.get("output_gate_db"), -34.0, -80, -10)
+        favorites = data.get("favorite_voices")
+        values["favorite_voices"] = tuple(
+            item for item in favorites[:50]
+            if isinstance(item, str) and len(item) == 37 and item.startswith('user_')
+            and all(c in '0123456789abcdef' for c in item[5:])) if isinstance(favorites, (list, tuple)) else ()
         theme = data.get("theme_color")
         values["theme_color"] = (theme if isinstance(theme, str) and len(theme) == 7 and theme[0] == '#'
                                  and all(c in '0123456789abcdefABCDEF' for c in theme[1:]) else '#284b7d')

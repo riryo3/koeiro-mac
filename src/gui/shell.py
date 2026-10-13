@@ -998,8 +998,8 @@ class VoicePanel(QFrame):
         segment_layout = QHBoxLayout(segment)
         segment_layout.setContentsMargins(3, 3, 3, 3)
         segment_layout.setSpacing(2)
-        for key, label in (('all', 'すべて'), ('standard', '標準ボイス'),
-                           ('user', '追加した声')):
+        for key, label in (('all', 'すべて'), ('favorite', '★お気に入り'),
+                           ('standard', '標準'), ('user', '追加')):
             button = QPushButton(label)
             button.setObjectName('filterTab')
             button.setCheckable(True)
@@ -1034,6 +1034,7 @@ class VoiceCard(QFrame):
     """One voice: avatar initial, name, kind and select."""
 
     selected = Signal(str)
+    favoriteToggled = Signal(str)
 
     def __init__(self, key, name, sub, parent=None):
         super().__init__(parent)
@@ -1058,12 +1059,30 @@ class VoiceCard(QFrame):
         text.addWidget(title)
         text.addWidget(caption)
         row.addLayout(text, 1)
+        self.star = QPushButton('☆')
+        self.star.setObjectName('cardStar')
+        self.star.setCheckable(True)
+        self.star.setFixedWidth(46)
+        self.star.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.star.setToolTip('クリックで、お気に入りに入れる／外す')
+        self.star.clicked.connect(lambda: self.favoriteToggled.emit(self.key))
+        row.addWidget(self.star)
         choose = QPushButton('選択')
         choose.setObjectName('cardChoose')
         choose.setCursor(Qt.CursorShape.PointingHandCursor)
         choose.clicked.connect(lambda: self.selected.emit(self.key))
         row.addWidget(choose)
         self.set_selected(False)
+
+    def set_favorite(self, favorite, slot=None):
+        """Fill the star; `slot` is the key (1-9, 0) a favourite answers to, if it has one."""
+        self.star.blockSignals(True)
+        self.star.setChecked(bool(favorite))
+        self.star.blockSignals(False)
+        self.star.setText(('★' + (slot or '')) if favorite else '☆')
+        self.star.setToolTip(
+            (f'お気に入り（キー {slot}・停止中に切り替え）。' if slot else 'お気に入り。')
+            + 'クリックで外します。' if favorite else 'クリックで、お気に入りに入れます。')
 
     def set_selected(self, selected):
         self.setProperty('selected', bool(selected))
@@ -1523,6 +1542,11 @@ def stylesheet(asset_dir):
         QCheckBox:disabled { color: #b4bcc9; }
         QSlider::groove:horizontal:disabled { background: #e8ecf2; }
         QSlider::handle:horizontal:disabled { background: #f3f5f8; border-color: #e3e8ef; }
+        QPushButton#cardStar { background: transparent; border: none; color: %(muted)s;
+                               font-size: 17px; padding: 0px; }
+        QPushButton#cardStar:hover { color: %(live)s; background: transparent; border: none; }
+        QPushButton#cardStar:checked { color: %(live)s; }
+        QPushButton#cardStar:pressed { background: transparent; padding: 0px; }
         QPushButton#scrollHint { background: %(card)s; color: %(live)s; border: 1px solid %(live)s;
                                  border-radius: 16px; padding: 0px; font-size: 16px; font-weight: 600; }
         QPushButton#scrollHint:hover { background: %(live)s; color: #ffffff; }
