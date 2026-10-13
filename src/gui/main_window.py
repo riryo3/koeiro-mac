@@ -871,15 +871,30 @@ class MainWindow(QMainWindow):
         dialog.activateWindow()
 
     def _open_audio_midi_setup(self):
-        """Open macOS's Audio MIDI Setup, where a device's sample rate is changed."""
+        """Open macOS's Audio MIDI Setup, where a device's sample rate is changed.
+
+        Every step is logged (exit code and error text) so a failure can be read from
+        logs/app.log instead of guessed at.
+        """
         from PySide6.QtCore import QProcess
-        QProcess.startDetached('open', ['-a', 'Audio MIDI Setup'])
-        # The app keeps running with its window closed (it reopens in the state it was
-        # quit in), so "open" alone can show nothing. A reopen event, the same one a Dock
-        # click sends, brings the Audio Devices window up.
-        QTimer.singleShot(1200, lambda: QProcess.startDetached(
-            'osascript', ['-e', 'tell application "Audio MIDI Setup" to reopen']))
-        self.monitor_note.setText('Audio MIDI設定を開きました。窓が出ないときは、メニューの'
+
+        def run(label, program, arguments):
+            process = QProcess(self)
+            process.finished.connect(lambda code, _status, p=process, n=label: log.info(
+                'Audio MIDI Setup step %s: exit=%s stderr=%s', n, code,
+                bytes(p.readAllStandardError()).decode('utf-8', 'replace').strip()))
+            process.errorOccurred.connect(lambda error, n=label: log.warning(
+                'Audio MIDI Setup step %s failed to start: %s', n, error))
+            process.start(program, arguments)
+            return process
+
+        log.info('Audio MIDI Setup button pressed')
+        run('open', '/usr/bin/open', ['/System/Applications/Utilities/Audio MIDI Setup.app'])
+        # The app restores its last state, which may be "no window"; a reopen event (what a
+        # Dock click sends) brings the Audio Devices window up.
+        QTimer.singleShot(1200, lambda: run('reopen', '/usr/bin/osascript',
+                                            ['-e', 'tell application "Audio MIDI Setup" to reopen']))
+        self.monitor_note.setText('Audio MIDI設定を開いています。窓が出ないときは、メニューの'
                                   '「ウインドウ → オーディオ装置を表示」を選んでください。')
 
     def _show_about(self):
