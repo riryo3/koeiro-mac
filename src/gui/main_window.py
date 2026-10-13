@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
         from .shell import MeterStrip
         meter_strip = QFrame()
         meter_strip.setObjectName('meterStrip')
-        meter_strip.setFixedWidth(196)
+        meter_strip.setFixedWidth(248)
         strip_layout = QVBoxLayout(meter_strip)
         strip_layout.setContentsMargins(12, 12, 8, 12)
         strip_layout.setSpacing(6)
@@ -257,7 +257,29 @@ class MainWindow(QMainWindow):
         meter_caption.setObjectName('muted')
         strip_layout.addWidget(meter_caption)
         self.input_bar = MeterStrip()
-        strip_layout.addWidget(self.input_bar, 1)
+        # The meters and, to their right, a vertical Gain fader (like a mixer channel).
+        meter_row = QHBoxLayout()
+        meter_row.setSpacing(8)
+        meter_row.addWidget(self.input_bar, 1)
+        from .shell import Fader
+        fader_column = QVBoxLayout()
+        fader_column.setSpacing(4)
+        fader_title = QLabel('Gain')
+        fader_title.setObjectName('muted')
+        fader_title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        fader_column.addWidget(fader_title)
+        self.gain_fader = Fader(-300, 120, 0)
+        fader_column.addWidget(self.gain_fader, 1, Qt.AlignmentFlag.AlignHCenter)
+        self.gain_fader_label = QLabel('+0.0 dB')
+        self.gain_fader_label.setObjectName('muted')
+        self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        fader_column.addWidget(self.gain_fader_label)
+        fader_box = QWidget()
+        fader_box.setObjectName('plainRow')
+        fader_box.setFixedWidth(50)
+        fader_box.setLayout(fader_column)
+        meter_row.addWidget(fader_box)
+        strip_layout.addLayout(meter_row, 1)
         readouts = QHBoxLayout()
         readouts.setSpacing(4)
         self.input_db = QLabel('入力\n−∞')
@@ -269,12 +291,18 @@ class MainWindow(QMainWindow):
         self.output_db.setAlignment(Qt.AlignmentFlag.AlignCenter)
         readouts.addWidget(self.output_db)
         strip_layout.addLayout(readouts)
+        # A visible reset under the meters: a double click alone is hard to discover.
+        self.meter_reset = QPushButton('Gain・ゲートをおすすめに')
+        self.meter_reset.setToolTip('Gain・入力ゲート・出力ゲートを、おすすめの値に戻します。')
+        strip_layout.addWidget(self.meter_reset)
         meter_hint = QLabel('緑=適正\n黄=大きめ\n赤=音割れ')
         meter_hint.setObjectName('muted')
         strip_layout.addWidget(meter_hint)
         meter_strip.setToolTip('入力と出力のピークをdBFSで表示します。黒い線は直近1秒のピークです。\n'
                                '話して、緑〜黄の範囲（-18〜-6 dBFS）に入るのが目安です。\n'
-                               '入力側のグレーの部分は、Noise Gateが閉じるレベルです（これ以下は変換に送られません）。')
+                               'グレーの境目の線（左に小さなつまみ）を上下にドラッグすると、ゲートを調整できます。\n'
+                               '入力側=これ以下は変換に送られません / 出力側=AIの無音ノイズを消します。\n'
+                               '線のダブルクリック、または下のボタンで、おすすめの値に戻ります。右の縦のつまみは、Gain（音量）です。')
         body_row.insertWidget(0, meter_strip)
         self.meter_strip = meter_strip
 
@@ -694,6 +722,40 @@ class MainWindow(QMainWindow):
         reset_all.clicked.connect(self._reset_all_sliders)
         self.band_convert.body.insertWidget(0, reset_all)
         self.reset_all_button = reset_all
+        self._wire_meter_controls()
+
+    def _wire_meter_controls(self):
+        """Gain fader and the draggable gate lines drive the (now hidden) ② sliders.
+
+        The sliders stay as the single source of truth (settings, presets, reset
+        buttons); the fader and the meter lines mirror them in both directions.
+        """
+        gain, gate, out_gate = self.gain, self.gate, self.out_gate
+        fader = self.gain_fader
+        fader.setValue(gain.value())
+
+        def gain_to_fader(value):
+            fader.blockSignals(True)
+            fader.setValue(value)
+            fader.blockSignals(False)
+            self.gain_fader_label.setText(f'{value/10:+.1f} dB')
+        gain.valueChanged.connect(gain_to_fader)
+        gain_to_fader(gain.value())
+        fader.valueChanged.connect(gain.setValue)
+
+        meter = self.input_bar
+        meter.gateDragged.connect(
+            lambda db: gate.setValue(round(max(-60.0, min(-10.0, db))*10)))
+        meter.outputGateDragged.connect(
+            lambda db: out_gate.setValue(-700 if db <= -58 else round(min(-10.0, db)*10)))
+        meter.gateReset.connect(
+            lambda index: (gate if index == 0 else out_gate).setValue(
+                gate.default_value if index == 0 else out_gate.default_value))
+        self.meter_reset.clicked.connect(lambda: [s.setValue(s.default_value)
+                                                  for s in (gain, gate, out_gate)
+                                                  if s.default_value is not None])
+        for slider in (gain, gate, out_gate):
+            self._container(slider).setVisible(False)
 
     def _reset_all_sliders(self):
         # Only sliders that can change right now: the others are greyed out while the
@@ -3450,8 +3512,6 @@ class MainWindow(QMainWindow):
             if key in cards:
                 cards[key].setVisible(show)
         self._update_advanced_reset()
-        if hasattr(self, 'out_gate'):
-            self._container(self.out_gate).setVisible(ai_mode)
         empty = getattr(self, '_advanced_empty', None)
         if empty is not None:
             nothing = not any(visible.get(k) for k in ('声の加工', '声の微調整', '抑揚補正'))

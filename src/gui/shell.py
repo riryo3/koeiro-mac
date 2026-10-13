@@ -13,7 +13,7 @@ from PySide6.QtCore import (QEvent, QLineF, QObject, QPoint, QRect, QRectF, Qt, 
 from PySide6.QtGui import QColor, QCursor, QPainter, QPaintEvent, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QButtonGroup, QComboBox,
                                 QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                                QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
+                                QScrollArea, QSizePolicy, QSlider, QVBoxLayout, QWidget)
 
 # Light TENTIAL-derived shell: a blue-tinted page, white cards carrying the
 # content, near-black text, one navy accent. Neutrals do the structure work;
@@ -126,6 +126,11 @@ class MeterStrip(QWidget):
 
     DB_MIN = -60.0
     TICKS = (0, -6, -12, -18, -24, -36, -48, -60)
+    GRAB = 8
+    # Emitted while a gate line is dragged on the meter (dB), and on a double click.
+    gateDragged = Signal(float)
+    outputGateDragged = Signal(float)
+    gateReset = Signal(int)
     GREEN_TO = -18.0
     YELLOW_TO = -6.0
 
@@ -141,7 +146,9 @@ class MeterStrip(QWidget):
         self._timer.setInterval(40)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
-        self.setMinimumWidth(170)
+        self._drag = None
+        self.setMouseTracking(True)
+        self.setMinimumWidth(150)
         self.setMinimumHeight(160)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
@@ -182,13 +189,79 @@ class MeterStrip(QWidget):
     def _y(self, fraction, top, height):
         return int(top + height*(1.0 - fraction))
 
-    def paintEvent(self, event: QPaintEvent):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    def _geometry(self):
         top, bottom = 8, 8
         height = max(10, self.height() - top - bottom)
         scale_width, bar_width, gap = 34, 28, 10
         xs = (scale_width + 6, scale_width + 6 + bar_width + gap)
+        return top, height, xs, bar_width
+
+    def _gate_value(self, index):
+        """The gate level a line sits at; a switched-off output gate rests at the floor."""
+        if index == 0:
+            return self._gate_db
+        return self._out_gate_db if self._out_gate_db is not None else self.DB_MIN
+
+    def _gate_at(self, pos):
+        top, height, xs, bar_width = self._geometry()
+        for index in (1, 0):
+            level = self._gate_value(index)
+            if level is None:
+                continue
+            fraction = max(0.0, min(1.0, (level - self.DB_MIN)/-self.DB_MIN))
+            y = self._y(fraction, top, height)
+            if xs[index] - 10 <= pos.x() <= xs[index] + bar_width + 4 and abs(pos.y() - y) <= self.GRAB:
+                return index
+        return None
+
+    def _db_at(self, y):
+        top, height, _xs, _bar = self._geometry()
+        fraction = max(0.0, min(1.0, 1.0 - (y - top)/height))
+        return self.DB_MIN + fraction*(-self.DB_MIN)
+
+    def mousePressEvent(self, event):
+        index = self._gate_at(event.position().toPoint())
+        if index is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._drag = index
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag is not None:
+            from PySide6.QtWidgets import QToolTip
+            db = self._db_at(event.position().y())
+            (self.gateDragged if self._drag == 0 else self.outputGateDragged).emit(db)
+            shown = self._gate_value(self._drag)
+            text = 'オフ' if (self._drag == 1 and self._out_gate_db is None) else f'{shown:.0f} dB'
+            QToolTip.showText(event.globalPosition().toPoint(),
+                              ('入力ゲート ' if self._drag == 0 else '出力ゲート ') + text, self)
+            event.accept()
+            return
+        hovering = self._gate_at(event.position().toPoint()) is not None
+        self.setCursor(Qt.CursorShape.SizeVerCursor if hovering else Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag is not None:
+            self._drag = None
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        index = self._gate_at(event.position().toPoint())
+        if index is not None:
+            self.gateReset.emit(index)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def paintEvent(self, event: QPaintEvent):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        top, height, xs, bar_width = self._geometry()
+        scale_width = 34
         green, yellow, red = QColor('#2f9e6f'), QColor('#d9a21b'), QColor(DANGER)
         zones = ((0.0, (self.GREEN_TO - self.DB_MIN)/-self.DB_MIN, green),
                  ((self.GREEN_TO - self.DB_MIN)/-self.DB_MIN,
@@ -217,8 +290,10 @@ class MeterStrip(QWidget):
             # Below the threshold the gate keeps the sound out (input) or mutes it (output).
             painter.fillRect(xs[index], gate_y, bar_width, top + height - gate_y,
                              QColor(120, 128, 140, 150))
-            painter.fillRect(xs[index], gate_y, bar_width, 1, QColor(TEXT_MUTED))
+            painter.fillRect(xs[index], gate_y, bar_width, 2, QColor(TEXT_MUTED))
             painter.setPen(QColor(TEXT_MUTED))
+            painter.setBrush(QColor(TEXT_MUTED))
+            painter.drawRoundedRect(xs[index] - 8, gate_y - 4, 8, 9, 2, 2)
             painter.drawLine(xs[1] + bar_width + 2, gate_y, xs[1] + bar_width + 8, gate_y)
             small = painter.font()
             small.setPointSize(8)
@@ -232,6 +307,12 @@ class MeterStrip(QWidget):
             painter.drawText(QRect(xs[1] + bar_width + 8, label_y + 12, 70, 14),
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                              f'{gate_db:.0f}')
+        if self._out_gate_db is None:
+            # Output gate off: a dim handle rests at the floor so it can be dragged up.
+            floor_y = self._y(0.0, top, height)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(TRACK))
+            painter.drawRoundedRect(xs[1] - 8, floor_y - 5, 8, 9, 2, 2)
         font = painter.font()
         font.setPointSize(8)
         painter.setFont(font)
@@ -1416,6 +1497,11 @@ def stylesheet(asset_dir):
         QTabWidget::pane { border: 1px solid %(border)s; border-radius: 10px; background: %(card)s; }
         QTabBar::tab { padding: 8px 12px; color: %(muted)s; }
         QTabBar::tab:selected { color: %(text)s; background: %(card)s; }
+        QSlider::groove:vertical { background: %(track)s; width: 6px; border-radius: 3px; }
+        QSlider::sub-page:vertical { background: %(track)s; border-radius: 3px; }
+        QSlider::handle:vertical { background: #ffffff; border: 1px solid %(live)s;
+                                   height: 14px; width: 26px; margin: 0 -10px; border-radius: 4px; }
+        QSlider::handle:vertical:pressed { background: %(press_light)s; }
         QSlider::groove:horizontal { background: %(track)s; height: 5px; border-radius: 2px; }
         QSlider::handle:horizontal { background: #ffffff; border: 1px solid %(border_dark)s;
                                      width: 16px; margin: -6px 0; border-radius: 8px; }
@@ -1479,6 +1565,21 @@ class ErrorDialog(QFrame):
         self.copy_button.setText('すべてコピー')
         self.show()
         self.raise_()
+
+
+class Fader(QSlider):
+    """A vertical level fader (like a mixer channel); a double click returns to `default`."""
+
+    def __init__(self, minimum, maximum, default, parent=None):
+        super().__init__(Qt.Orientation.Vertical, parent)
+        self.setRange(minimum, maximum)
+        self.default_value = default
+        self.setValue(default)
+        self.setToolTip('上下にドラッグして音量（Gain）を調整します。ダブルクリックで 0 dB に戻ります。')
+
+    def mouseDoubleClickEvent(self, event):
+        self.setValue(self.default_value)
+        event.accept()
 
 
 class ScrollHints(QObject):
