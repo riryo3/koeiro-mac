@@ -46,6 +46,8 @@ class AppSettings:
     output_gate_db: float = -34.0
     # Theme colour (accent): buttons, selected tabs, Start. Any #rrggbb.
     theme_color: str = '#284b7d'
+    # Appearance: follow the OS ('system'), or always 'light' / 'dark'.
+    appearance: str = 'system'
     # Favourite voices (ids, in the order they were starred); the first ten get keys 1-9, 0.
     favorite_voices: tuple = ()
     # Off by default: the spectral stage is a user choice, not the shipped route.
@@ -157,6 +159,8 @@ class AppSettings:
             item for item in favorites[:50]
             if isinstance(item, str) and len(item) == 37 and item.startswith('user_')
             and all(c in '0123456789abcdef' for c in item[5:])) if isinstance(favorites, (list, tuple)) else ()
+        appearance = data.get("appearance")
+        values["appearance"] = appearance if appearance in ("system", "light", "dark") else "system"
         theme = data.get("theme_color")
         values["theme_color"] = (theme if isinstance(theme, str) and len(theme) == 7 and theme[0] == '#'
                                  and all(c in '0123456789abcdefABCDEF' for c in theme[1:]) else '#284b7d')

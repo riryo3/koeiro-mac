@@ -1366,27 +1366,65 @@ def _mix(hex_a, hex_b, amount):
     return '#%02x%02x%02x' % tuple(round(x + (y - x)*amount) for x, y in zip(a, b))
 
 
-def set_theme(hex_color=DEFAULT_THEME):
-    """Set the theme (accent) colour used by the stylesheet and the painted widgets.
+LIGHT_PALETTE = dict(
+    BG='#eef2f7', CARD='#ffffff', BORDER='#d4dbe5', BORDER_DARK='#9fb0c7', TEXT='#18181b',
+    TEXT_MUTED='#606060', TRACK='#d4dbe5', FIELD='#f6fafe', DIS_BG='#f3f5f8', DIS_FG='#b4bcc9',
+    DIS_BORDER='#e3e8ef', GROOVE='#c3cbd9', GROOVE_OFF='#e8ecf2', HANDLE='#ffffff',
+    DANGER_TEXT='#c51f1f', WARN='#a34a08')
+DARK_PALETTE = dict(
+    BG='#14171d', CARD='#1c212a', BORDER='#2c3340', BORDER_DARK='#4b566a', TEXT='#e6e9ef',
+    TEXT_MUTED='#9aa3b2', TRACK='#2c3340', FIELD='#12151a', DIS_BG='#191d25', DIS_FG='#5b6577',
+    DIS_BORDER='#242a35', GROOVE='#3a4354', GROOVE_OFF='#262c37', HANDLE='#d9dee8',
+    DANGER_TEXT='#ff7a7a', WARN='#f0a04b')
+FIELD = DIS_BG = DIS_FG = DIS_BORDER = GROOVE = GROOVE_OFF = HANDLE = '#000000'
+_ACCENT = DEFAULT_THEME
+_DARK = False
 
-    The default reproduces the original look exactly. For other colours the pressed
-    fills and the pill tint are derived from it, and the text drawn on the accent is
-    white or near-black, whichever reads better.
-    """
-    global PRIMARY, LIVE, PRIMARY_TEXT, PILL, PRESS_DARK, PRESS_LIGHT, BORDER_DARK_THEME
-    color = hex_color if isinstance(hex_color, str) and len(hex_color) == 7 else DEFAULT_THEME
-    PRIMARY = LIVE = color
-    if color.lower() == DEFAULT_THEME:
-        PRIMARY_TEXT, PILL, PRESS_DARK, PRESS_LIGHT = '#ffffff', '#dde1f0', '#1b3358', '#b5c2de'
-        BORDER_DARK_THEME = None
-        return
+
+def _luminance(color):
     red, green, blue = (int(color[i:i + 2], 16) for i in (1, 3, 5))
-    luminance = (0.2126*red + 0.7152*green + 0.0722*blue)/255
-    PRIMARY_TEXT = '#ffffff' if luminance < 0.6 else '#18181b'
-    PRESS_DARK = _mix(color, '#000000', 0.35)
-    PRESS_LIGHT = _mix(color, '#ffffff', 0.65)
-    PILL = _mix(color, '#ffffff', 0.88)
-    BORDER_DARK_THEME = _mix(color, '#ffffff', 0.55)
+    return (0.2126*red + 0.7152*green + 0.0722*blue)/255
+
+
+def _recompute():
+    """Derive every colour the stylesheet and the painted widgets read, from
+    (theme colour, light or dark). The default light result is the original look."""
+    global PRIMARY, LIVE, PRIMARY_TEXT, PILL, PRESS_DARK, PRESS_LIGHT, BORDER_DARK_THEME
+    palette = DARK_PALETTE if _DARK else LIGHT_PALETTE
+    globals().update(palette)
+    accent = _ACCENT
+    if _DARK and _luminance(accent) < 0.45:
+        # A dark accent vanishes on a dark page. The default navy gets a clear blue of
+        # its own (blending navy with white only gives a dull grey-blue).
+        accent = '#7aa2e3' if accent.lower() == DEFAULT_THEME else _mix(accent, '#ffffff', 0.4)
+    PRIMARY = LIVE = accent
+    PRIMARY_TEXT = '#ffffff' if _luminance(accent) < 0.6 else '#18181b'
+    BORDER_DARK_THEME = None
+    if _DARK:
+        PILL = _mix(palette['CARD'], accent, 0.18)
+        PRESS_DARK = _mix(accent, '#000000', 0.35)
+        PRESS_LIGHT = _mix(palette['CARD'], accent, 0.45)
+    elif accent.lower() == DEFAULT_THEME:
+        PILL, PRESS_DARK, PRESS_LIGHT = '#dde1f0', '#1b3358', '#b5c2de'
+    else:
+        PILL = _mix(accent, '#ffffff', 0.88)
+        PRESS_DARK = _mix(accent, '#000000', 0.35)
+        PRESS_LIGHT = _mix(accent, '#ffffff', 0.65)
+        BORDER_DARK_THEME = _mix(accent, '#ffffff', 0.55)
+
+
+def set_theme(hex_color=DEFAULT_THEME):
+    """Set the theme (accent) colour; everything else is derived (see _recompute)."""
+    global _ACCENT
+    _ACCENT = hex_color if isinstance(hex_color, str) and len(hex_color) == 7 else DEFAULT_THEME
+    _recompute()
+
+
+def set_appearance(dark):
+    """Switch the whole palette between light and dark."""
+    global _DARK
+    _DARK = bool(dark)
+    _recompute()
 
 
 def stylesheet(asset_dir):
@@ -1467,7 +1505,7 @@ def stylesheet(asset_dir):
         QPushButton#indexJump { background: transparent; border: none; border-radius: 7px;
                                 padding: 6px 8px; color: %(muted)s; font-size: 12px; }
         QPushButton#indexJump:hover { color: %(text)s; }
-        QPushButton#indexJump:checked { background: %(live)s; color: #ffffff; font-weight: 600; }
+        QPushButton#indexJump:checked { background: %(live)s; color: %(primary_text)s; font-weight: 600; }
         QPushButton#indexJump:disabled { color: %(border_dark)s; }
         QLabel#latencyValue { font-size: 18px; font-weight: 600; color: %(text)s; }
         QLabel#stageError { color: %(warn)s; font-size: 12px; }
@@ -1485,7 +1523,7 @@ def stylesheet(asset_dir):
         QPushButton#filterTab { background: transparent; border: none;
                                 border-radius: 7px; padding: 6px 4px; color: %(muted)s; font-size: 12px; }
         QPushButton#filterTab:hover { color: %(text)s; }
-        QPushButton#filterTab:checked { background: %(live)s; color: #ffffff; font-weight: 600; }
+        QPushButton#filterTab:checked { background: %(live)s; color: %(primary_text)s; font-weight: 600; }
         QFrame#voiceCard { background: %(card)s; border: 1px solid %(border)s; border-radius: 12px; }
         QFrame#voiceCard:hover { border-color: %(border_dark)s; }
         QFrame#voiceCard[selected="true"] { border: 2px solid %(live)s; }
@@ -1498,14 +1536,14 @@ def stylesheet(asset_dir):
                                   border-radius: 7px; padding: 10px 6px; font-weight: 600;
                                   color: %(muted)s; }
         QPushButton#routeButton:hover { color: %(text)s; }
-        QPushButton#routeButton:checked { background: %(live)s; color: #ffffff; }
+        QPushButton#routeButton:checked { background: %(live)s; color: %(primary_text)s; }
         QLabel#muted { color: %(muted)s; font-size: 12px; }
         QLabel#title { font-size: 22px; font-weight: 600; }
         QLabel#sectionTitle { font-size: 16px; font-weight: 600; color: %(text)s; }
         QFrame#outputCard { background: %(card)s; border: 1px solid %(border)s; border-radius: 12px; }
         QFrame#pitchRow { background: transparent; }
         QFrame#transportBar { background: %(bg)s; border-top: 1px solid %(edge)s; }
-        QLineEdit { background: #f6fafe; border: 1px solid %(border_dark)s; border-radius: 8px; padding: 8px; }
+        QLineEdit { background: %(field)s; border: 1px solid %(border_dark)s; border-radius: 8px; padding: 8px; }
         QComboBox, QPushButton { background: %(pill)s; border: 1px solid %(border_dark)s;
                                  border-radius: 8px; padding: 7px; color: %(text)s; }
         QComboBox { padding-right: 26px; }
@@ -1534,14 +1572,14 @@ def stylesheet(asset_dir):
         QPushButton#mute:checked:pressed { background: %(danger_text)s; border-color: %(danger_text)s; }
         QPushButton#stop:pressed { background: %(press_light)s; border-color: %(live)s;
                                    padding-top: 11px; padding-bottom: 9px; }
-        QPushButton#start:disabled { background: %(pill)s; color: #9aa3b2; border-color: %(pill)s; }
+        QPushButton#start:disabled { background: %(pill)s; color: %(dis_fg)s; border-color: %(pill)s; }
         /* Anything that cannot be used right now is washed out, not just a bit lighter. */
-        QPushButton:disabled { background: #f3f5f8; color: #b4bcc9; border-color: #e3e8ef; }
-        QComboBox:disabled { background: #f3f5f8; color: #b4bcc9; border-color: #e3e8ef; }
-        QLineEdit:disabled { background: #f3f5f8; color: #b4bcc9; border-color: #e3e8ef; }
-        QCheckBox:disabled { color: #b4bcc9; }
-        QSlider::groove:horizontal:disabled { background: #e8ecf2; }
-        QSlider::handle:horizontal:disabled { background: #f3f5f8; border-color: #e3e8ef; }
+        QPushButton:disabled { background: %(dis_bg)s; color: %(dis_fg)s; border-color: %(dis_border)s; }
+        QComboBox:disabled { background: %(dis_bg)s; color: %(dis_fg)s; border-color: %(dis_border)s; }
+        QLineEdit:disabled { background: %(dis_bg)s; color: %(dis_fg)s; border-color: %(dis_border)s; }
+        QCheckBox:disabled { color: %(dis_fg)s; }
+        QSlider::groove:horizontal:disabled { background: %(groove_off)s; }
+        QSlider::handle:horizontal:disabled { background: %(dis_bg)s; border-color: %(dis_border)s; }
         QPushButton#cardStar { background: transparent; border: none; color: %(muted)s;
                                font-size: 17px; padding: 0px; }
         QPushButton#cardStar:hover { color: %(live)s; background: transparent; border: none; }
@@ -1549,8 +1587,8 @@ def stylesheet(asset_dir):
         QPushButton#cardStar:pressed { background: transparent; padding: 0px; }
         QPushButton#scrollHint { background: %(card)s; color: %(live)s; border: 1px solid %(live)s;
                                  border-radius: 16px; padding: 0px; font-size: 16px; font-weight: 600; }
-        QPushButton#scrollHint:hover { background: %(live)s; color: #ffffff; }
-        QPushButton#scrollHint:pressed { background: %(press_dark)s; color: #ffffff; padding: 0px; }
+        QPushButton#scrollHint:hover { background: %(live)s; color: %(primary_text)s; }
+        QPushButton#scrollHint:pressed { background: %(press_dark)s; color: %(primary_text)s; padding: 0px; }
         QPushButton#stop { padding: 10px 22px; border-radius: 8px; }
         QLabel#warningText { color: %(warn)s; font-size: 12px; }
         QLabel#stepTitle { color: %(text)s; font-size: 16px; font-weight: 600; }
@@ -1562,15 +1600,15 @@ def stylesheet(asset_dir):
         QTabWidget::pane { border: 1px solid %(border)s; border-radius: 10px; background: %(card)s; }
         QTabBar::tab { padding: 8px 12px; color: %(muted)s; }
         QTabBar::tab:selected { color: %(text)s; background: %(card)s; }
-        QSlider::groove:vertical { background: #c3cbd9; width: 8px; border-radius: 4px; }
-        QSlider::sub-page:vertical { background: #c3cbd9; border-radius: 4px; }
+        QSlider::groove:vertical { background: %(groove)s; width: 8px; border-radius: 4px; }
+        QSlider::sub-page:vertical { background: %(groove)s; border-radius: 4px; }
         QSlider::add-page:vertical { background: %(live)s; border-radius: 4px; }
-        QSlider::handle:vertical { background: #ffffff; border: 2px solid %(live)s;
+        QSlider::handle:vertical { background: %(handle)s; border: 2px solid %(live)s;
                                    height: 16px; width: 34px; margin: 0 -14px; border-radius: 5px; }
         QSlider::handle:vertical:hover { background: %(press_light)s; }
         QSlider::handle:vertical:pressed { background: %(press_light)s; }
         QSlider::groove:horizontal { background: %(track)s; height: 5px; border-radius: 2px; }
-        QSlider::handle:horizontal { background: #ffffff; border: 1px solid %(border_dark)s;
+        QSlider::handle:horizontal { background: %(handle)s; border: 1px solid %(border_dark)s;
                                      width: 16px; margin: -6px 0; border-radius: 8px; }
         QProgressBar { border: none; background: %(track)s; border-radius: 4px; height: 10px; }
         QProgressBar::chunk { background: %(live)s; border-radius: 4px; }
@@ -1587,7 +1625,9 @@ def stylesheet(asset_dir):
         'primary': PRIMARY, 'primary_text': PRIMARY_TEXT, 'live': LIVE,
         'pill': PILL, 'track': TRACK, 'card': CARD, 'border': BORDER,
         'border_dark': BORDER_DARK_THEME or BORDER_DARK, 'danger': DANGER, 'danger_text': DANGER_TEXT,
-        'warn': WARN, 'press_dark': PRESS_DARK, 'press_light': PRESS_LIGHT}
+        'warn': WARN, 'press_dark': PRESS_DARK, 'press_light': PRESS_LIGHT,
+        'field': FIELD, 'dis_bg': DIS_BG, 'dis_fg': DIS_FG, 'dis_border': DIS_BORDER,
+        'groove': GROOVE, 'groove_off': GROOVE_OFF, 'handle': HANDLE}
 
 
 class ErrorDialog(QFrame):

@@ -399,6 +399,7 @@ class MainWindow(QMainWindow):
         # The voice list: right-hand, and foldable to zero width.
         self.voice_panel = VoicePanel()
         body_row.addWidget(self.voice_panel)
+        shell.set_appearance(self._effective_dark())
         shell.set_theme(self.settings.theme_color)
         self.setStyleSheet(stylesheet(Path(__file__).parent/'assets'))
 
@@ -923,6 +924,19 @@ class MainWindow(QMainWindow):
         theme = QAction('テーマカラー…', self)
         theme.triggered.connect(self._choose_theme_color)
         view.addAction(theme)
+        appearance = view.addMenu('外観')
+        from PySide6.QtGui import QActionGroup
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        self.appearance_actions = {}
+        for mode, label in (('system', 'システムに合わせる'), ('light', 'ライト'), ('dark', 'ダーク')):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(self.settings.appearance == mode)
+            action.triggered.connect(lambda _checked=False, m=mode: self._set_appearance(m))
+            group.addAction(action)
+            appearance.addAction(action)
+            self.appearance_actions[mode] = action
         theme_reset = QAction('テーマカラーをもとに戻す', self)
         theme_reset.triggered.connect(lambda: self._apply_theme_color(shell.DEFAULT_THEME))
         view.addAction(theme_reset)
@@ -955,6 +969,10 @@ class MainWindow(QMainWindow):
         self.action_lab, self.action_guide = lab, guide
         self._rebuild_voice_menu()
         self._rebuild_scene_menu()
+        from PySide6.QtGui import QGuiApplication
+        hints = QGuiApplication.styleHints()
+        if hasattr(hints, 'colorSchemeChanged'):
+            hints.colorSchemeChanged.connect(self._on_system_color_scheme)
 
     def _open_card_dialog(self, key, title, names, width):
         """Show cards of the old アプリ column in a window of their own (built on first use)."""
@@ -1075,17 +1093,42 @@ class MainWindow(QMainWindow):
         if color.isValid():
             self._apply_theme_color(color.name())
 
-    def _apply_theme_color(self, hex_color):
+    def _effective_dark(self):
+        """Dark when the setting says so, or when it follows the OS and the OS is dark."""
+        mode = self.settings.appearance
+        if mode == 'dark':
+            return True
+        if mode == 'light':
+            return False
+        from PySide6.QtGui import QGuiApplication
+        hints = QGuiApplication.styleHints()
+        return hasattr(hints, 'colorScheme') and hints.colorScheme() == Qt.ColorScheme.Dark
+
+    def _restyle(self):
+        """Re-apply palette and theme colour to the stylesheet and every widget."""
         from . import shell
         from .shell import stylesheet
-        shell.set_theme(hex_color)
+        shell.set_appearance(self._effective_dark())
+        shell.set_theme(self.settings.theme_color)
         self.setStyleSheet(stylesheet(Path(__file__).parent/'assets'))
-        self.settings = replace(self.settings, theme_color=hex_color)
-        self._save_settings()
-        for widget in self.findChildren(QWidget):
+        for widget in [self, *self.findChildren(QWidget)]:
             widget.style().unpolish(widget)
             widget.style().polish(widget)
             widget.update()
+
+    def _set_appearance(self, mode):
+        self.settings = replace(self.settings, appearance=mode)
+        self._save_settings()
+        self._restyle()
+
+    def _on_system_color_scheme(self, *_):
+        if self.settings.appearance == 'system':
+            self._restyle()
+
+    def _apply_theme_color(self, hex_color):
+        self.settings = replace(self.settings, theme_color=hex_color)
+        self._save_settings()
+        self._restyle()
 
     def _voice_list_menu_toggled(self, checked):
         # An explicit choice wins over the automatic fold on a narrow window.
