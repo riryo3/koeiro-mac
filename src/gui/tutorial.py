@@ -180,7 +180,7 @@ class TutorialOverlay(QWidget):
         spec = PAGES[self._index]
         self.title.setText(spec['title'])
         self.body.setText(spec['body'])
-        self.position.setText(f'{self._index + 1} / {len(PAGES)}')
+        self.position.setText(f'{self._index + 1} / {len(PAGES)}　Enterで次へ・Escで閉じる')
         self.back_button.setEnabled(self._index > 0)
         self.next_button.setText('はじめる' if self._index == len(PAGES) - 1 else '次へ')
         self._target = None
@@ -283,7 +283,7 @@ class TutorialOverlay(QWidget):
         if key == Qt.Key.Key_Escape:
             self.skip()
             return
-        if key == Qt.Key.Key_Right:
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._next()
             return
         if key == Qt.Key.Key_Left:
