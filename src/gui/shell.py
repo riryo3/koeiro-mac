@@ -1477,6 +1477,13 @@ def _recompute():
         # A dark accent vanishes on a dark page. The default navy gets a clear blue of
         # its own (blending navy with white only gives a dull grey-blue).
         accent = '#7aa2e3' if accent.lower() == DEFAULT_THEME else _mix(accent, '#ffffff', 0.4)
+    if _DARK:
+        # A vivid, light accent (neon cyan, lime ...) glows too much over large areas on a dark
+        # page; cap its saturation and lightness a little. Light mode keeps the exact colour.
+        tinted = QColor(accent)
+        hue, saturation, lightness, _alpha = tinted.getHslF()
+        tinted.setHslF(max(hue, 0.0), min(saturation, 0.62), min(lightness, 0.64))
+        accent = tinted.name()
     PRIMARY = LIVE = accent
     PRIMARY_TEXT = '#ffffff' if _luminance(accent) < 0.6 else '#18181b'
     BORDER_DARK_THEME = None
@@ -1653,6 +1660,10 @@ def stylesheet(asset_dir):
         QPushButton#start:focus { border-color: %(live)s; }
         QPushButton#start:pressed { background: %(press_dark)s; border-color: %(press_dark)s;
                                     padding-top: 11px; padding-bottom: 9px; }
+        QPushButton#aiAlert { background: %(danger)s; border-color: %(danger)s; color: #ffffff;
+                              font-weight: 600; }
+        QPushButton#aiAlert:pressed { background: %(danger_text)s; border-color: %(danger_text)s;
+                                      padding-top: 8px; padding-bottom: 6px; }
         QPushButton#mute:checked { background: %(danger)s; border-color: %(danger)s; color: #ffffff; }
         QPushButton#mute:checked:pressed { background: %(danger_text)s; border-color: %(danger_text)s; }
         QPushButton#stop:pressed { background: %(press_light)s; border-color: %(live)s;

@@ -370,6 +370,14 @@ class MainWindow(QMainWindow):
         self.mute_button.setToolTip('出力とモニターの音を、すぐに消します（Mキー）。もう一度押すと、戻ります。')
         self.mute_button.toggled.connect(self._mute_toggled)
         transport_layout.addWidget(self.mute_button)
+        # Shown only while the AI is broken or has stopped: one click to bring it back.
+        self.ai_alert_button = QPushButton('AIを再起動')
+        self.ai_alert_button.setObjectName('aiAlert')
+        self.ai_alert_button.setMinimumHeight(44)
+        self.ai_alert_button.setToolTip('AIが止まったり、不具合を起こしたときに押します。AIの部分だけを、起動し直します。')
+        self.ai_alert_button.clicked.connect(self._restart_ai)
+        self.ai_alert_button.setVisible(False)
+        transport_layout.addWidget(self.ai_alert_button)
         status_column = QVBoxLayout()
         status_column.setSpacing(2)
         self.status = QLabel("停止中")
@@ -873,6 +881,11 @@ class MainWindow(QMainWindow):
         self.advanced_reset.setFixedHeight(slot_height)
         self.advanced_reset.clicked.connect(self._reset_advanced)
         self.band_advanced.body.insertWidget(0, self.advanced_reset)
+        # The AI status read-out and the (rarely needed) worker restart move to the 診断
+        # window; the restart also gets a top-row button that appears when the AI breaks.
+        self._diag_extras = [self.ai_status, self.ai_performance, self.ai_restart]
+        for extra in self._diag_extras:
+            extra.setVisible(False)
         adv_names = ('pitch', 'formant', 'brightness', 'wet', 'ai_wait', 'ai_fade',
                      'ai_brightness', 'ai_pitch', 'tune_sib', 'tune_cons', 'tune_caps',
                      'tune_floor', 'tune_excess', 'tune_mid', 'tune_match', 'tune_ptrans',
@@ -923,6 +936,9 @@ class MainWindow(QMainWindow):
         self.action_mute.setShortcut('M')
         self.action_mute.toggled.connect(lambda checked: self.mute_button.setChecked(checked))
         control.addAction(self.action_mute)
+        self.action_restart_ai = QAction('AIを再起動', self)
+        self.action_restart_ai.triggered.connect(self._restart_ai)
+        control.addAction(self.action_restart_ai)
         self.voice_menu = menu_bar.addMenu('声')
         # シーン: the settings dialog on top, then every saved scene to load with one click.
         self.scene_menu = menu_bar.addMenu('シーン')
@@ -1004,6 +1020,10 @@ class MainWindow(QMainWindow):
             column.setSpacing(12)
             for name in names:
                 column.addWidget(self._card_pool[name])
+            if key == 'diagnostics':
+                for extra in getattr(self, '_diag_extras', []):
+                    column.addWidget(extra)
+                    extra.setVisible(True)
             column.addStretch(1)
             close_row = QHBoxLayout()
             close_row.addStretch(1)
@@ -1452,6 +1472,26 @@ class MainWindow(QMainWindow):
             # only for the cases that need an explanation.
             self.ai_banner.setVisible(state in ('error', 'unavailable', 'fallback'))
             self.ai_banner_note.setVisible(state in ('error', 'unavailable', 'fallback'))
+        self._update_ai_alert(state)
+
+    def _update_ai_alert(self, state):
+        """Show the top-row AI restart button only while the AI is in trouble.
+
+        Toggled only when it changes: this runs every UI tick, and re-showing a button each
+        tick once made it impossible to click.
+        """
+        button = getattr(self, 'ai_alert_button', None)
+        if button is None:
+            return
+        broken = state == 'error'
+        try:
+            if (not broken and self.controller.engine.running and self.router is not None
+                    and self.mode.currentData() == 'ai_voice'):
+                broken = self.router.ai.bridge.status in ('Stopped', 'Error')
+        except Exception:
+            pass
+        if button.isHidden() == broken:
+            button.setVisible(broken)
 
     def _translate_readiness(self):
         """The translate route's readiness, from the translation driver.
@@ -4338,9 +4378,14 @@ class MainWindow(QMainWindow):
         player = engine.monitor_player
         if player is not None and player.running:
             tap = engine.monitor_tap
+            glitchy = player.zeroed > 24000 or tap.dropped > 24000    # more than about half a second
             self.monitor_note.setText(
-                f"Monitor再生中：{player.device_label} · 途切れ {player.zeroed} / 溢れ {tap.dropped}"
-                "（多少は仕様です。ヘッドホン推奨）")
+                f"モニター再生中：{player.device_label}"
+                + ("（音が途切れ気味です。ヘッドホンを使うか、Bufferを大きくすると改善することがあります）"
+                   if glitchy else "（安定しています）"))
+            detail = f'途切れ {player.zeroed} サンプル / 溢れ {tap.dropped} サンプル'
+            if self.monitor_note.toolTip() != detail:
+                self.monitor_note.setToolTip(detail)
         elif engine.monitor_error:
             self.monitor_note.setText(f"Monitorを開始できませんでした：{engine.monitor_error}")
         elif self.monitor_toggle.isChecked() and self.controller.engine.running:
