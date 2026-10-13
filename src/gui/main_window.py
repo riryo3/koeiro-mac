@@ -921,9 +921,8 @@ class MainWindow(QMainWindow):
         self.action_voice_list.toggled.connect(self._voice_list_menu_toggled)
         view.addAction(self.action_voice_list)
         from . import shell
-        theme = QAction('テーマカラー…', self)
-        theme.triggered.connect(self._choose_theme_color)
-        view.addAction(theme)
+        view.addSeparator()
+        # 外観 and テーマカラー are twin submenus, so they read as one group.
         appearance = view.addMenu('外観')
         from PySide6.QtGui import QActionGroup
         group = QActionGroup(self)
@@ -937,9 +936,13 @@ class MainWindow(QMainWindow):
             group.addAction(action)
             appearance.addAction(action)
             self.appearance_actions[mode] = action
-        theme_reset = QAction('テーマカラーをもとに戻す', self)
+        theme_menu = view.addMenu('テーマカラー')
+        theme = QAction('色を選ぶ…', self)
+        theme.triggered.connect(self._choose_theme_color)
+        theme_menu.addAction(theme)
+        theme_reset = QAction('もとの色に戻す', self)
         theme_reset.triggered.connect(lambda: self._apply_theme_color(shell.DEFAULT_THEME))
-        view.addAction(theme_reset)
+        theme_menu.addAction(theme_reset)
         view.addSeparator()
         lab = QAction('実験…', self)
         lab.triggered.connect(lambda: self._open_drawer('lab'))
