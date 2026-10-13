@@ -147,8 +147,9 @@ class MeterStrip(QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.start()
         self._drag = None
+        self._hint_shown = None
         self.setMouseTracking(True)
-        self.setMinimumWidth(150)
+        self.setMinimumWidth(170)
         self.setMinimumHeight(160)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
@@ -192,8 +193,9 @@ class MeterStrip(QWidget):
     def _geometry(self):
         top, bottom = 8, 8
         height = max(10, self.height() - top - bottom)
-        scale_width, bar_width, gap = 34, 28, 10
-        xs = (scale_width + 6, scale_width + 6 + bar_width + gap)
+        # [input gate number] [input bar] [shared dB scale] [output bar] [output gate number]
+        bar_width = 28
+        xs = (50, 50 + bar_width + 26)
         return top, height, xs, bar_width
 
     def _gate_value(self, index):
@@ -210,7 +212,10 @@ class MeterStrip(QWidget):
                 continue
             fraction = max(0.0, min(1.0, (level - self.DB_MIN)/-self.DB_MIN))
             y = self._y(fraction, top, height)
-            if xs[index] - 10 <= pos.x() <= xs[index] + bar_width + 4 and abs(pos.y() - y) <= self.GRAB:
+            # The handle sits on the outer edge of each bar: left for input, right for output.
+            low, high = ((xs[0] - 14, xs[0] + bar_width + 4) if index == 0
+                         else (xs[1] - 4, xs[1] + bar_width + 14))
+            if low <= pos.x() <= high and abs(pos.y() - y) <= self.GRAB:
                 return index
         return None
 
@@ -253,8 +258,17 @@ class MeterStrip(QWidget):
                               ('入力ゲート ' if self._drag == 0 else '出力ゲート ') + text, self)
             event.accept()
             return
-        hovering = self._gate_at(event.position().toPoint()) is not None
+        hovered = self._gate_at(event.position().toPoint())
+        hovering = hovered is not None
         self.setCursor(Qt.CursorShape.SizeVerCursor if hovering else Qt.CursorShape.ArrowCursor)
+        if hovering and hovered != self._hint_shown:
+            from PySide6.QtWidgets import QToolTip
+            QToolTip.showText(event.globalPosition().toPoint(), (
+                '入力ゲート: これより小さい音は、変換に送りません。\n'
+                '息や部屋の雑音を消します。上下にドラッグで調整。' if hovered == 0 else
+                '出力ゲート: これより小さい出力を、無音にします。\n'
+                'AIが無音のときに出す、小さなノイズを消します。上下にドラッグで調整。'), self)
+        self._hint_shown = hovered
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -276,7 +290,6 @@ class MeterStrip(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         top, height, xs, bar_width = self._geometry()
-        scale_width = 34
         green, yellow, red = QColor('#2f9e6f'), QColor('#d9a21b'), QColor(DANGER)
         zones = ((0.0, (self.GREEN_TO - self.DB_MIN)/-self.DB_MIN, green),
                  ((self.GREEN_TO - self.DB_MIN)/-self.DB_MIN,
@@ -295,9 +308,12 @@ class MeterStrip(QWidget):
             hold_y = self._y(self._hold[i], top, height)
             if self._hold[i] > 0.0:
                 painter.fillRect(x, hold_y, bar_width, 2, QColor(TEXT))
-        used_label_y = []
-        for index, (gate_db, name) in enumerate(((self._gate_db, '入力ゲート'),
-                                                 (self._out_gate_db, '出力ゲート'))):
+        small = painter.font()
+        small.setPointSize(7)
+        # The number sits beside the bar it belongs to (left = input, right = output), so the
+        # caption is just "ゲート"; the hover text spells out what each one does.
+        for index, (gate_db, name) in enumerate(((self._gate_db, 'ゲート'),
+                                                 (self._out_gate_db, 'ゲート'))):
             if gate_db is None:
                 continue
             fraction = max(0.0, min(1.0, (gate_db - self.DB_MIN)/-self.DB_MIN))
@@ -308,35 +324,35 @@ class MeterStrip(QWidget):
             painter.fillRect(xs[index], gate_y, bar_width, 2, QColor(TEXT_MUTED))
             painter.setPen(QColor(TEXT_MUTED))
             painter.setBrush(QColor(TEXT_MUTED))
-            painter.drawRoundedRect(xs[index] - 8, gate_y - 4, 8, 9, 2, 2)
-            painter.drawLine(xs[1] + bar_width + 2, gate_y, xs[1] + bar_width + 8, gate_y)
-            small = painter.font()
-            small.setPointSize(7)   # "出力ゲート" has to fit between the bars and the fader
             painter.setFont(small)
-            label_y = gate_y - 15
-            while any(abs(label_y - other) < 28 for other in used_label_y):
-                label_y += 28
-            used_label_y.append(label_y)
-            painter.drawText(QRect(xs[1] + bar_width + 8, label_y, 70, 14),
-                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
-            painter.drawText(QRect(xs[1] + bar_width + 8, label_y + 12, 70, 14),
-                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                             f'{gate_db:.0f}')
+            if index == 0:       # input gate: handle and number on the left
+                painter.drawRoundedRect(xs[0] - 8, gate_y - 4, 8, 9, 2, 2)
+                area = QRect(0, gate_y - 15, xs[0] - 11, 28)
+                align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            else:                # output gate: handle and number on the right
+                painter.drawRoundedRect(xs[1] + bar_width, gate_y - 4, 8, 9, 2, 2)
+                left = xs[1] + bar_width + 11
+                area = QRect(left, gate_y - 15, max(10, self.width() - left), 28)
+                align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            painter.drawText(area, align, f'{name}\n{gate_db:.0f} dB')
         if self._out_gate_db is None:
             # Output gate off: a dim handle rests at the floor so it can be dragged up.
             floor_y = self._y(0.0, top, height)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(TRACK))
-            painter.drawRoundedRect(xs[1] - 8, floor_y - 5, 8, 9, 2, 2)
+            painter.drawRoundedRect(xs[1] + bar_width, floor_y - 5, 8, 9, 2, 2)
+        # The dB scale is shared and sits between the two bars.
         font = painter.font()
         font.setPointSize(8)
         painter.setFont(font)
         painter.setPen(QColor(TEXT_MUTED))
+        column = QRect(xs[0] + bar_width, 0, xs[1] - xs[0] - bar_width, 0)
         for tick in self.TICKS:
             y = self._y((tick - self.DB_MIN)/-self.DB_MIN, top, height)
-            painter.drawLine(scale_width, y, scale_width + 4, y)
-            painter.drawText(QRect(0, y - 7, scale_width - 2, 14),
-                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, str(tick))
+            painter.drawLine(xs[0] + bar_width, y, xs[0] + bar_width + 3, y)
+            painter.drawLine(xs[1] - 3, y, xs[1], y)
+            painter.drawText(QRect(column.x(), y - 7, column.width(), 14),
+                             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, str(tick))
 
 
 STATUS_BADGES = {

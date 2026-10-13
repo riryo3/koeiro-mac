@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
         from .shell import MeterStrip
         meter_strip = QFrame()
         meter_strip.setObjectName('meterStrip')
-        meter_strip.setFixedWidth(248)
+        meter_strip.setFixedWidth(268)
         strip_layout = QVBoxLayout(meter_strip)
         strip_layout.setContentsMargins(12, 12, 8, 12)
         strip_layout.setSpacing(6)
@@ -284,15 +284,17 @@ class MainWindow(QMainWindow):
         readouts = QHBoxLayout()
         readouts.setSpacing(0)
         readouts.setContentsMargins(0, 0, 0, 0)
-        readouts.addSpacing(35)
+        readouts.addSpacing(45)
         self.input_db = QLabel('入力\n−∞')
         self.output_db = QLabel('出力\n−∞')
         self.gain_fader_label = QLabel('Gain\n+0.0')
-        for label, width in ((self.input_db, 38), (self.output_db, 38)):
+        for index, (label, width) in enumerate(((self.input_db, 38), (self.output_db, 38))):
             label.setObjectName('muted')
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setFixedWidth(width)
             readouts.addWidget(label)
+            if index == 0:
+                readouts.addSpacing(16)   # the shared scale column lies between the two bars
         readouts.addStretch(1)
         readouts.addSpacing(8)
         self.gain_fader_label.setObjectName('muted')
