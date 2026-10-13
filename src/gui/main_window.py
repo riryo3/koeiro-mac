@@ -794,6 +794,7 @@ class MainWindow(QMainWindow):
         meter.gateReset.connect(
             lambda index: (gate if index == 0 else out_gate).setValue(
                 gate.default_value if index == 0 else out_gate.default_value))
+        self._ai_formant_changed()      # grey the formant amount when its box is not ticked
         self.meter_reset.clicked.connect(lambda: [s.setValue(s.default_value)
                                                   for s in (gain, gate, out_gate)
                                                   if s.default_value is not None])
@@ -2514,6 +2515,10 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'ai_formant_toggle'):
             return
         self.ai_formant_amount_label.setText(f'+{self.ai_formant_amount.value()/10:.1f} st')
+        # The lift only acts while the box is ticked, so the amount is greyed out otherwise.
+        self.ai_formant_amount.setEnabled(self.ai_formant_toggle.isChecked())
+        if hasattr(self, '_slider_defaults_all'):
+            self._sync_reset_buttons()
         if not self._closing:
             self.controller.set_ai_formant(self.ai_formant_toggle.isChecked(),
                                            self.ai_formant_amount.value() / 10)
