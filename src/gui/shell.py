@@ -1284,6 +1284,7 @@ def stylesheet(asset_dir):
                                 color: %(primary_text)s; font-weight: 600; padding: 8px 22px;
                                 border-radius: 20px; }
         QPushButton#guideNext:focus { border-color: %(live)s; }
+        QPushButton#guideNext:pressed { background: #1b3358; border-color: #1b3358; }
         QPushButton#guideBack { padding: 8px 16px; }
         QPushButton#guideSkip { background: transparent; border: none; color: %(muted)s;
                                 padding: 6px 8px; }
@@ -1339,6 +1340,9 @@ def stylesheet(asset_dir):
         QComboBox QAbstractItemView { background: %(card)s; border: 1px solid %(border_dark)s;
                                       selection-background-color: %(pill)s; selection-color: %(text)s; }
         QPushButton:hover { border-color: %(live)s; }
+        /* Pressed: a clearly deeper fill, a navy edge and a 1 px sink, so a click is visible. */
+        QPushButton:pressed { background: #b5c2de; border-color: %(live)s;
+                              padding-top: 8px; padding-bottom: 6px; }
         QPushButton:focus, QComboBox:focus, QLineEdit:focus { border-color: %(live)s; }
         QCheckBox { spacing: 8px; color: %(text)s; border: 1px solid transparent; border-radius: 4px; }
         QCheckBox:focus { border-color: %(live)s; }
@@ -1350,6 +1354,10 @@ def stylesheet(asset_dir):
         QPushButton#start { background: %(primary)s; border-color: %(primary)s; color: %(primary_text)s;
                             font-weight: 600; padding: 10px 26px; border-radius: 8px; }
         QPushButton#start:focus { border-color: %(live)s; }
+        QPushButton#start:pressed { background: #1b3358; border-color: #1b3358;
+                                    padding-top: 11px; padding-bottom: 9px; }
+        QPushButton#stop:pressed { background: #b5c2de; border-color: %(live)s;
+                                   padding-top: 11px; padding-bottom: 9px; }
         QPushButton#start:disabled { background: %(pill)s; color: #9aa3b2; border-color: %(pill)s; }
         /* Anything that cannot be used right now is washed out, not just a bit lighter. */
         QPushButton:disabled { background: #f3f5f8; color: #b4bcc9; border-color: #e3e8ef; }
@@ -1361,6 +1369,7 @@ def stylesheet(asset_dir):
         QPushButton#scrollHint { background: %(card)s; color: %(live)s; border: 1px solid %(live)s;
                                  border-radius: 16px; padding: 0px; font-size: 16px; font-weight: 600; }
         QPushButton#scrollHint:hover { background: %(live)s; color: #ffffff; }
+        QPushButton#scrollHint:pressed { background: #1b3358; color: #ffffff; padding: 0px; }
         QPushButton#stop { padding: 10px 22px; border-radius: 8px; }
         QLabel#warningText { color: %(warn)s; font-size: 12px; }
         QLabel#stepTitle { color: %(text)s; font-size: 16px; font-weight: 600; }
