@@ -1,0 +1,14 @@
+{
+  "id": "translate-ja-en",
+  "name": "リアルタイム翻訳ボイス（日本語 → English）",
+  "kind": "translation",
+  "version": "0.1.0",
+  "description": "認識した日本語を英語へ翻訳し、アニメ声のTTSで発話します。GPU推奨。モデル本体は初回に別途取得します（このマニフェストだけでは動きません）。",
+  "requires_device": "cuda",
+  "size_mb": 3200,
+  "assets": ["models/translator", "models/tts"],
+  "entry": {
+    "module": "koeiro_translate",
+    "callable": "build_providers"
+  }
+}

@@ -1,0 +1,148 @@
+"""AI process ownership and environment isolation, without external models."""
+import json
+import os
+from pathlib import Path
+import subprocess
+
+import pytest
+
+from src.vc.client import worker_python
+
+
+def test_crashed_worker_closes_every_handle_and_is_idempotent():
+    from types import SimpleNamespace
+    from src.vc.client import ServiceClient
+
+    class Stream:
+        def __init__(self, broken=False):
+            self.closed = False
+            self.broken = broken
+
+        def close(self):
+            self.closed = True
+            if self.broken:
+                raise OSError(22, 'dead worker pipe')
+
+    stdin, stdout, log = Stream(True), Stream(), Stream()
+    client = ServiceClient(None)
+    client.process = SimpleNamespace(stdin=stdin, stdout=stdout,
+                                     poll=lambda: 1, wait=lambda timeout: 1)
+    client.log_file = log
+    client.close()
+    client.close()
+    assert stdin.closed and stdout.closed and log.closed
+    assert client.process is None and client.log_file is None
+
+
+def test_missing_ai_environment_reports_setup(tmp_path):
+    with pytest.raises(RuntimeError, match='AI環境'):
+        worker_python(tmp_path)
+
+
+def test_a_bundled_worker_is_told_where_the_models_live(tmp_path, monkeypatch):
+    """KoeiroWorker.exe carries torch; models/ and vc_models/ sit in the install folder.
+
+    The frozen worker resolves its asset root from its own bundle unless the launcher
+    points it elsewhere, so starting it without KOEIRO_ROOT/KOEIRO_ASSETS would report
+    every checkpoint as missing on an installed build with an AI voice pack.
+    """
+    import src.runtime_paths as runtime_paths
+    installed = tmp_path / 'Koeiro'
+    installed.mkdir()
+    (installed / 'KoeiroWorker.exe').write_bytes(b'MZ')
+    monkeypatch.setattr('src.vc.client.is_frozen', lambda: True)
+    monkeypatch.setattr('src.vc.client.install_root', lambda: installed)
+    monkeypatch.setattr(runtime_paths, 'install_root', lambda: installed)
+    executable, environment = worker_python(installed)
+    assert executable.name == 'KoeiroWorker.exe'
+    assert environment['KOEIRO_ROOT'] == str(installed)
+    assert environment['KOEIRO_ASSETS'] == str(installed)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows venv redirector')
+def test_direct_worker_keeps_venv_and_is_terminable(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    expected = root/'vc_models/meanvc2/.venv/Scripts/python.exe'
+    if not expected.exists():
+        pytest.skip('Optional isolated MeanVC2 Python not installed')
+    monkeypatch.setenv('PYTHONHOME', 'invalid inherited home')
+    monkeypatch.setenv('PYTHONPATH', 'invalid inherited modules')
+    executable, environment = worker_python(root)
+    # The isolated MeanVC2 venv is retained through the launcher variable, while the
+    # interpreter CPython actually runs is the one pyvenv.cfg points at (no stub).
+    assert executable.is_file() and Path(executable) != expected
+    assert environment['__PYVENV_LAUNCHER__'] == str(expected)
+    assert 'PYTHONHOME' not in environment and 'PYTHONPATH' not in environment
+    script = ('import sys,os,json,time; '
+              'print(json.dumps([os.getpid(),sys.executable,sys.prefix]),flush=True); time.sleep(60)')
+    process = subprocess.Popen([str(executable), '-u', '-c', script], env=environment,
+                               stdout=subprocess.PIPE, text=True,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        pid, invoked, prefix = json.loads(process.stdout.readline())
+        assert pid == process.pid  # actual interpreter, not a wrapper parent
+        assert Path(invoked) == expected
+        assert Path(prefix) == expected.parents[1]
+    finally:
+        process.terminate()
+        process.wait(timeout=3)
+        process.stdout.close()
+    assert process.returncode is not None
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows venv configuration')
+def test_bad_home_rejected_before_process_launch(tmp_path):
+    scripts = tmp_path/'vc_models/meanvc2/.venv/Scripts'
+    scripts.mkdir(parents=True)
+    (scripts/'python.exe').touch()
+    (tmp_path/'vc_models/meanvc2/.venv/pyvenv.cfg').write_text('home = Z:/missing-python\n')
+    with pytest.raises(RuntimeError, match='Python本体'):
+        worker_python(tmp_path)
+
+
+def test_the_worker_log_never_opens_a_file_inside_the_bundle(tmp_path, monkeypatch):
+    """A packaged build is read-only, so its own tree cannot hold the worker log.
+
+    The log used to be opened under the bundle root *before* the worker was
+    launched, which on a real install is a PermissionError and took AI Voice down
+    with it while the settings and the app log were already going to a writable
+    per-user directory.
+    """
+    import subprocess
+
+    from src.vc.client import ServiceClient
+    from src.vc.config import AIParameters
+
+    bundle = tmp_path / 'dist' / 'Koeiro' / '_internal'
+    (bundle / 'logs').mkdir(parents=True)
+    writable = tmp_path / 'userdata'
+    writable.mkdir()
+    captured = {}
+
+    class FakeProcess:
+        def __init__(self, *args, **kwargs):
+            captured['args'] = args
+            self.stdin = self.stdout = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(subprocess, 'Popen', FakeProcess)
+    monkeypatch.setattr('src.vc.client.asset_root', lambda: bundle)
+    monkeypatch.setattr('src.vc.client.data_dir', lambda: writable)
+    monkeypatch.setattr('src.vc.client.worker_python',
+                        lambda root, model=None: (tmp_path / 'python', {'PATH': 'x'}))
+    client = ServiceClient(AIParameters(device='cpu'))
+    client.log_file = None
+    try:
+        client.start()
+        assert (writable / 'logs' / 'ai-worker.log').is_file()
+        assert not any((bundle / 'logs').iterdir())
+    finally:
+        client.close()

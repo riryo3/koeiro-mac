@@ -1,0 +1,15 @@
+# Optional realtime-translation pack. Install into its OWN environment
+# (vc_models/translate/.venv), never into the GUI venv, so the base install stays
+# small and a missing pack never affects Koeiro's voice route.
+#
+# Translation: a distilled multilingual seq2seq model.
+#   Candidate to evaluate: NLLB-200-distilled-600M (200 languages, JA->EN).
+# TTS: an anime-style multilingual voice.
+#   Candidates to evaluate: Style-Bert-VITS2 (English-capable models), GPT-SoVITS.
+#   Add the chosen engine's own requirements here when the pack is built.
+#
+# These are candidates, not a settled choice: verify size, latency and licence on a
+# GPU machine before shipping the pack.
+transformers>=4.44,<5
+sentencepiece>=0.2,<1
+sacremoses>=0.1,<1

@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=8,<10
+# Brand assets: tests/test_brand.py inspects them and tools/build_brand.py regenerates them.
+pillow>=10,<12
+# The PV take: tools/obs_record.py and tools/pv_take.py drive OBS over obs-websocket.
+obsws-python>=1.8,<2

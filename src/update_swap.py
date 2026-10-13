@@ -1,0 +1,169 @@
+"""Apply a staged update: swap the install dir with backup and rollback.
+
+Standard library only and no Qt/audio/model imports, so `app.py --apply-update`
+can run it in a bare helper process after the GUI has exited. Two install forms
+reach this module: a release directory (a marked source tree copy) and a frozen
+Linux bundle, where renaming the folder that holds a running executable is legal.
+A frozen Windows build never does -- Windows locks the running ``Koeiro.exe`` and
+its DLLs, so that one updates through its setup program instead
+(``src/app_update.py: run_installer_and_restart``). Every function here is
+unit-tested against temporary directories.
+"""
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+class SwapError(Exception):
+    """Raised when the install cannot be replaced safely."""
+
+
+# User content that survives an update. Everything else comes from the package.
+# `models/user_voices` merges by folder: shipped voices refresh from the package,
+# user-added voices are carried over. The virtualenvs and the fetched LavaSR tree
+# are carried over too (re-downloading gigabytes on every update would defeat the
+# feature); when dependency pins change, re-run tools/setup_release.py afterwards.
+PRESERVE_FILES = ("settings.json",)
+PRESERVE_DIRS = ("recordings", ".venv", "vc_models/meanvc2/.venv", "vc_models/post_lavasr")
+# A frozen bundle's folder also holds the AI voice pack (worker, checkpoints, LavaSR),
+# which no app package contains, so the whole tree has to survive the swap.
+BUNDLE_PRESERVE_DIRS = ("recordings", "vc_models")
+
+
+def wait_for_exit(pid, timeout=60):
+    """Return once the process is gone; raise SwapError on timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            return
+        except OSError:
+            return
+        time.sleep(0.2)
+    raise SwapError("アプリの終了を待機できませんでした")
+
+
+def _copy_tree(source, destination):
+    # Keep symlinks as links: venv interpreters are often symlinks to the base
+    # Python, and dereferencing them would still work but waste space.
+    shutil.copytree(source, destination, symlinks=True, dirs_exist_ok=True)
+
+
+def _relocate(source, destination):
+    """Move a preserved tree if the filesystem allows it, copy if not.
+
+    The backup sits beside the install folder, so a gigabyte-scale venv or AI pack is
+    a rename here. Copying was the old behaviour and could need a second
+    download-sized copy of torch next to the install.
+    """
+    try:
+        shutil.move(str(source), str(destination))
+    except (OSError, shutil.Error):
+        _copy_tree(source, destination)
+
+
+def swap_install(staging, install, preserve_dirs=None):
+    """Replace install with staging; backup + user content preserved.
+
+    Returns a small report dict. On failure the previous install is restored
+    whenever possible and SwapError is raised.
+    """
+    staging, install = Path(staging), Path(install)
+    preserved = tuple(preserve_dirs) if preserve_dirs else PRESERVE_DIRS
+    if not staging.is_dir() or staging == install:
+        raise SwapError("更新パッケージが壊れています")
+    if not install.is_dir():
+        raise SwapError("インストール先が見つかりません")
+    backup = install.parent / (install.name + ".bak")
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+    try:
+        os.rename(install, backup)
+    except OSError as error:
+        raise SwapError(f"バックアップに失敗しました: {error}") from error
+    moved = []
+    try:
+        shutil.move(str(staging), str(install))
+        # User voices: shipped folders refresh from the package, the rest carry over.
+        staged_voices = install / "models" / "user_voices"
+        backup_voices = backup / "models" / "user_voices"
+        if backup_voices.is_dir():
+            staged_voices.mkdir(parents=True, exist_ok=True)
+            staged_names = {path.name for path in staged_voices.iterdir()}
+            for path in backup_voices.iterdir():
+                if path.name not in staged_names:
+                    target = staged_voices / path.name
+                    if path.is_dir():
+                        _copy_tree(path, target)
+                    else:
+                        shutil.copy2(path, target)
+        for name in PRESERVE_FILES:
+            source = backup / name
+            if source.is_file() and not (install / name).exists():
+                shutil.copy2(source, install / name)
+        for name in preserved:
+            source = backup / name
+            destination = install / name
+            if source.is_dir() and not destination.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                _relocate(source, destination)
+                moved.append((source, destination))
+    except Exception as error:
+        # Put the relocated trees back so the backup can be restored whole.
+        for source, destination in reversed(moved):
+            try:
+                if destination.exists():
+                    _relocate(destination, source)
+            except (OSError, shutil.Error):
+                pass
+        try:
+            shutil.rmtree(install, ignore_errors=True)
+            if not install.exists():
+                os.rename(backup, install)
+        except OSError:
+            pass
+        raise SwapError(f"更新の適用に失敗しました: {error}") from error
+    return {"install": str(install), "backup": str(backup)}
+
+
+def launch_new(argv):
+    """Start the updated copy without any tie to this helper process."""
+    try:
+        if sys.platform == "win32":
+            flags = 0x00000008 | 0x00000200
+            subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             stdin=subprocess.DEVNULL, creationflags=flags, close_fds=True)
+        else:
+            subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    except Exception as error:
+        raise SwapError(f"再起動に失敗しました: {error}") from error
+
+
+def main(plan_path):
+    """Helper entry: wait, swap, launch. Returns a process exit code.
+
+    app.py configures logging before calling this, so a failure the detached helper
+    cannot show on screen still lands in logs/app.log.
+    """
+    try:
+        plan = json.loads(Path(plan_path).read_text("utf-8"))
+        wait_for_exit(int(plan["parent_pid"]))
+        report = swap_install(plan["staging"], plan["install"], plan.get("preserve_dirs"))
+        launch_new(plan["launch"])
+    except SwapError as error:
+        logging.getLogger("update").error("update failed: %s", error)
+        return 1
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        logging.getLogger("update").error("update failed: %s", error)
+        return 1
+    logging.getLogger("update").info("updated: %s", report["install"])
+    return 0
