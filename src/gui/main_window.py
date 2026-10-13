@@ -40,6 +40,12 @@ from src.prosody.parameters import ProsodyParameters, PRESETS as PROSODY_PRESETS
 
 log = logging.getLogger(__name__)
 
+# In-app updating replaces the Windows installer / Linux bundle of the upstream release.
+# There is no macOS package yet, so the update controls are greyed out there. To enable
+# it later: publish a macOS asset, add a macOS branch to src/app_update.py and point
+# UPDATE_REPO (src/version.py) at the repository that publishes it.
+UPDATES_SUPPORTED = sys.platform != 'darwin'
+
 
 class MainWindow(QMainWindow):
     def __init__(self, settings_manager, controller=None, presence=None, presence_factory=None):
@@ -851,6 +857,7 @@ class MainWindow(QMainWindow):
         check_update = QAction('アップデートを確認…', self)
         check_update.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)
         check_update.triggered.connect(lambda: self._check_updates(manual=True))
+        check_update.setEnabled(UPDATES_SUPPORTED)
         help_menu.addAction(check_update)
         self.action_lab, self.action_guide = lab, guide
 
@@ -2247,6 +2254,11 @@ class MainWindow(QMainWindow):
         self.update_auto.setChecked(self.settings.app_update_check)
         self.update_auto.toggled.connect(lambda: (self._capture_settings(), self._save_settings()))
         row.addWidget(self.update_auto)
+        if not UPDATES_SUPPORTED:
+            self.update_check_btn.setEnabled(False)
+            self.update_auto.setEnabled(False)
+            self.update_status.setText('Mac版では、アプリ内の更新はまだ使えません。新しい版は、'
+                                       '本家のGitHub（github.com/heynegix/koeiro）で確認してください。')
         row.addStretch(1)
         column.addLayout(row)
         # Appended, not inserted: this card used to be pinned near the top of the
@@ -2369,7 +2381,7 @@ class MainWindow(QMainWindow):
 
     def _check_updates(self, manual=True):
         """Ask GitHub for the newest release on a worker thread."""
-        if self._closing:
+        if self._closing or not UPDATES_SUPPORTED:
             return
         from src import app_update
         self._update_manual = manual
@@ -2378,7 +2390,7 @@ class MainWindow(QMainWindow):
         self.files.submit('update_check', lambda: json.dumps(app_update.check_now()))
 
     def _auto_update_check(self):
-        if self._closing or "PYTEST_CURRENT_TEST" in os.environ:
+        if self._closing or not UPDATES_SUPPORTED or "PYTEST_CURRENT_TEST" in os.environ:
             return
         if not self.settings.app_update_check:
             return
