@@ -738,6 +738,26 @@ class MainWindow(QMainWindow):
         self._advanced_empty.setVisible(False)
         self.band_advanced.body.insertWidget(0, self._advanced_empty)
         self.band_advanced.body.addWidget(self.nameplate, 0, Qt.AlignmentFlag.AlignRight)
+        # Line the three columns up: the same one-line caption area and an action row of the
+        # same height at the top (a button where there is one, a spacer where not), so the
+        # first cards start at the same height.
+        slot_height = max(self.refresh.sizeHint().height(), self.reset_all_button.sizeHint().height())
+        for band in (self.band_wire, self.band_convert, self.band_advanced):
+            title = band.layout().itemAt(0).widget()
+            if title is not None:
+                title.setFixedHeight(34)  # the three glyphs (🔌 🎛 🔧) differ in height
+                title.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            note = band.layout().itemAt(1).widget()
+            if note is not None:
+                note.setWordWrap(True)
+                note.setMinimumHeight(38)
+                note.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.refresh.setFixedHeight(slot_height)
+        self.reset_all_button.setFixedHeight(slot_height)
+        spacer = QWidget()
+        spacer.setObjectName('plainRow')
+        spacer.setFixedHeight(slot_height)
+        self.band_advanced.body.insertWidget(0, spacer)
         columns = QWidget()
         row = QHBoxLayout(columns)
         row.setContentsMargins(20, 6, 20, 0)
