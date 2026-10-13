@@ -756,10 +756,24 @@ class MainWindow(QMainWindow):
                 note.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.refresh.setFixedHeight(slot_height)
         self.reset_all_button.setFixedHeight(slot_height)
-        spacer = QWidget()
-        spacer.setObjectName('plainRow')
-        spacer.setFixedHeight(slot_height)
-        self.band_advanced.body.insertWidget(0, spacer)
+        # ③ has one recommended-settings button for its cards (Female DSP / AI fine
+        # tuning), so the per-slider ones and the in-card buttons are hidden below.
+        self.advanced_reset = QPushButton('この列をおすすめ設定にする')
+        self.advanced_reset.setFixedHeight(slot_height)
+        self.advanced_reset.clicked.connect(self._reset_advanced)
+        self.band_advanced.body.insertWidget(0, self.advanced_reset)
+        adv_names = ('pitch', 'formant', 'brightness', 'wet', 'ai_wait', 'ai_fade',
+                     'ai_brightness', 'ai_pitch', 'tune_sib', 'tune_cons', 'tune_caps',
+                     'tune_floor', 'tune_excess', 'tune_mid', 'tune_match', 'tune_ptrans',
+                     'tune_pcap', 'tune_level')
+        self._adv_sliders = [getattr(self, n) for n in adv_names if hasattr(self, n)]
+        for slider in self._adv_sliders:
+            slider.reset_button.setVisible(False)
+        self._slider_defaults = [x for x in getattr(self, '_slider_defaults', [])
+                                 if x not in self._adv_sliders]
+        for widget in (self.ai_natural, self.tune_reset):
+            widget.setVisible(False)
+        self._update_advanced_reset()
         columns = QWidget()
         row = QHBoxLayout(columns)
         row.setContentsMargins(20, 6, 20, 0)
@@ -3244,7 +3258,7 @@ class MainWindow(QMainWindow):
             self._container(widget).setVisible(natural)
         # The Female DSP page only drives the DSP path. Whole rows hide, captions
         # included, so the page never shows a label without its control.
-        self.pitch_row.setVisible(dsp_mode)
+        self.pitch_row.setVisible(False)   # a leftover duplicate of the Pitch slider above
         self.dsp_note.setVisible(dsp_mode)
         for widget in (self.preset, self.quality, self.pitch, self.formant, self.brightness,
                        self.wet, self.low_cut, self.limiter):
@@ -3270,6 +3284,31 @@ class MainWindow(QMainWindow):
         self.prosody_fixed_note.setVisible(mean)
         self._apply_card_visibility()
 
+    def _reset_advanced(self):
+        """おすすめ for the 詳細 column: whatever card the current mode shows."""
+        if self._pending or self.controller.engine.running:
+            return
+        mode = self.mode.currentData()
+        if mode == 'ai_voice':
+            self._apply_natural_voice()   # standard voice + the app's recommended AI settings
+            self._reset_tune()
+        elif mode == 'female_dsp':
+            for slider in (self.pitch, self.formant, self.brightness, self.wet):
+                if slider.default_value is not None:
+                    slider.setValue(slider.default_value)
+
+    def _update_advanced_reset(self):
+        button = getattr(self, 'advanced_reset', None)
+        if button is None:
+            return
+        mode = self.mode.currentData()
+        stopped = not self.controller.engine.running and not self._pending
+        button.setEnabled(stopped and mode in ('ai_voice', 'female_dsp'))
+        button.setToolTip({
+            'ai_voice': '標準ボイスと、AI Voice の推奨設定（48 kHz / 256 など）に戻します。デバイスの選択は変わりません。',
+            'female_dsp': 'Pitch / Formant / Brightness / Dry-Wet を、おすすめの値に戻します。'
+        }.get(mode, 'いまのモードには、おすすめ設定に戻す項目がありません。'))
+
     def _apply_card_visibility(self):
         """Show only the cards that act on the current conversion mode.
 
@@ -3291,6 +3330,7 @@ class MainWindow(QMainWindow):
         for key, show in visible.items():
             if key in cards:
                 cards[key].setVisible(show)
+        self._update_advanced_reset()
         if hasattr(self, 'out_gate'):
             self._container(self.out_gate).setVisible(ai_mode)
         empty = getattr(self, '_advanced_empty', None)
@@ -3795,6 +3835,7 @@ class MainWindow(QMainWindow):
         self.ai_device.setEnabled(stopped and not self._closing and mean)
         self.ai_wait.setEnabled(stopped and not self._closing and not mean)
         self._sync_reset_buttons()
+        self._update_advanced_reset()
         self.ai_quality.setEnabled(stopped and not self._closing and not mean)
         self.ai_restart.setEnabled(self.router is not None and not self._pending and not self._closing)
         self.mode.setEnabled(self.router is not None and not self._pending and not self._closing)
