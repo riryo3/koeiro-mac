@@ -1048,6 +1048,8 @@ class VoicePanel(QFrame):
     stage for someone who has already chosen.
     """
 
+    closeRequested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('voicePanel')
@@ -1055,9 +1057,21 @@ class VoicePanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 18, 16, 18)
         layout.setSpacing(10)
+        title_row = QHBoxLayout()
         title = QLabel('声リスト')
         title.setObjectName('railTitle')
-        layout.addWidget(title)
+        title_row.addWidget(title, 1)
+        self.close_button = QPushButton('✕')
+        self.close_button.setFlat(True)
+        self.close_button.setFixedSize(30, 30)
+        self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_button.setToolTip('声リストを閉じる')
+        self.close_button.setStyleSheet(
+            'QPushButton { border: none; border-radius: 15px; font-size: 16px; background: transparent; }'
+            'QPushButton:hover { background: rgba(128,128,128,0.25); }')
+        self.close_button.clicked.connect(self.closeRequested)
+        title_row.addWidget(self.close_button)
+        layout.addLayout(title_row)
         search_caption = QLabel('名前で絞り込む')
         search_caption.setObjectName('muted')
         layout.addWidget(search_caption)

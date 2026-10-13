@@ -422,6 +422,18 @@ class MainWindow(QMainWindow):
 
         # The voice list: right-hand, and foldable to zero width.
         self.voice_panel = VoicePanel()
+        self.voice_panel.closeRequested.connect(self._close_voice_panel)
+        self.voice_tab = QPushButton('‹\n声\nリ\nス\nト', body)
+        self.voice_tab.setFixedSize(26, 120)
+        self.voice_tab.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.voice_tab.setToolTip('声リストを開く')
+        self.voice_tab.setStyleSheet(
+            'QPushButton { border: 1px solid rgba(128,128,128,0.5); border-right: none; '
+            'border-top-left-radius: 10px; border-bottom-left-radius: 10px; font-size: 12px; '
+            'background: palette(window); }'
+            'QPushButton:hover { background: palette(midlight); }')
+        self.voice_tab.clicked.connect(self._open_voice_panel)
+        self.voice_tab.hide()
         body_row.addWidget(self.voice_panel)
         shell.set_appearance(self._effective_dark())
         shell.set_theme(self.settings.theme_color)
@@ -1181,6 +1193,15 @@ class MainWindow(QMainWindow):
         self._voice_user_choice = checked
         self._toggle_voice_panel(collapsed=not checked)
 
+    def _close_voice_panel(self):
+        self._voice_user_choice = False if not self._voice_floating else self._voice_user_choice
+        self._toggle_voice_panel(collapsed=True)
+
+    def _open_voice_panel(self):
+        if not self._voice_floating:
+            self._voice_user_choice = True
+        self._toggle_voice_panel(collapsed=False)
+
     def _place_voice_panel(self):
         """On a narrow window the voice list floats over the stage instead of squeezing it."""
         panel = self.voice_panel
@@ -1201,6 +1222,11 @@ class MainWindow(QMainWindow):
             panel.setGeometry(body.width() - panel.width(), 0, panel.width(), body.height())
             if panel.isVisible():
                 panel.raise_()
+        tab = self.voice_tab
+        tab.setVisible(self._voice_floating and not panel.isVisible())
+        if tab.isVisible():
+            tab.move(body.width() - tab.width(), max(0, (body.height() - tab.height()) // 3))
+            tab.raise_()
 
     def _auto_fold_voice_list(self):
         """A narrow window (small laptop) folds the voice list unless the user chose."""
@@ -1566,6 +1592,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        QTimer.singleShot(0, self._place_voice_panel)
         self._place_drawers()
         self._ensure_presence()
 
@@ -4303,6 +4330,10 @@ class MainWindow(QMainWindow):
         self._pending_request = self.controller.stop()
 
     def _set_controls(self, stopped):
+        # Voices cannot change while running: a floating list gets out of the way.
+        if not stopped and getattr(self, '_was_stopped', True) and self._voice_floating and self._voice_wanted:
+            self._toggle_voice_panel(collapsed=True)
+        self._was_stopped = stopped
         for widget in (self.input_device, self.output_device, self.rate, self.buffer, self.refresh):
             widget.setEnabled(stopped and not self._closing)
         # Monitor is applied live, so it stays available while the engine runs.
