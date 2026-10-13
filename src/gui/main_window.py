@@ -899,9 +899,37 @@ class MainWindow(QMainWindow):
 
     def _show_about(self):
         """Credits: the original project, its license and the models this app builds on."""
+        from PySide6.QtWidgets import QDialog
+        from PySide6.QtGui import QPixmap
         from src.version import APP_VERSION
-        QMessageBox.about(self, 'Koeiroについて', (
-            f'<h3>Koeiro（声彩） v{APP_VERSION}</h3>'
+        from .splash import asset_path
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Koeiroについて')
+        dialog.setFixedWidth(540)
+        column = QVBoxLayout(dialog)
+        column.setContentsMargins(26, 22, 26, 20)
+        column.setSpacing(16)
+        # Top: icon and name side by side.
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        icon_file = asset_path('icon.png')
+        if icon_file is not None:
+            icon = QLabel()
+            icon.setPixmap(QPixmap(str(icon_file)).scaledToHeight(
+                64, Qt.TransformationMode.SmoothTransformation))
+            head.addWidget(icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        names = QVBoxLayout()
+        names.setSpacing(2)
+        title = QLabel('Koeiro（声彩）')
+        title.setObjectName('stepTitle')
+        names.addWidget(title)
+        version = QLabel(f'v{APP_VERSION} ・ Mac（Apple Silicon）非公式対応版')
+        version.setObjectName('muted')
+        names.addWidget(version)
+        head.addLayout(names, 1)
+        column.addLayout(head)
+        # Below: the credits, across the full width.
+        body = QLabel(
             '<p>このアプリは、<b>heynegix さん</b>が作った Koeiro を、Mac（Apple Silicon）で動かすための'
             '<b>非公式</b>の対応版です。基本の仕組みとデザインは、すべて元の作者によるものです。'
             'ありがとうございます。</p>'
@@ -910,7 +938,21 @@ class MainWindow(QMainWindow):
             '<p>使っている主な技術: MeanVC2（Apache-2.0）、LavaSR（Apache-2.0）、Vocos（MIT）、'
             'WavLM、PySide6 / Qt（LGPLv3）、PortAudio / sounddevice、PyTorch。'
             '詳しくは LICENSE と THIRD_PARTY_NOTICES.md を見てください。</p>'
-            '<p>Mac 版の変更は MAC.md にまとめています。</p>'))
+            '<p>Mac 版の変更は MAC.md にまとめています。</p>')
+        body.setWordWrap(True)
+        body.setTextFormat(Qt.TextFormat.RichText)
+        body.setOpenExternalLinks(True)
+        column.addWidget(body)
+        # Bottom right: OK.
+        foot = QHBoxLayout()
+        foot.addStretch(1)
+        ok = QPushButton('OK')
+        ok.setDefault(True)
+        ok.setMinimumWidth(88)
+        ok.clicked.connect(dialog.accept)
+        foot.addWidget(ok)
+        column.addLayout(foot)
+        dialog.exec()
 
     def _voice_list_menu_toggled(self, checked):
         # An explicit choice wins over the automatic fold on a narrow window.
