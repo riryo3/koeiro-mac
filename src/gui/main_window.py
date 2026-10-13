@@ -608,7 +608,6 @@ class MainWindow(QMainWindow):
         self._build_update_section(self.band_app.body)
         self._build_discord_section(self.band_app.body)
         self._build_diagnostics_section(self.band_app.body)
-        self.band_app.body.addWidget(self.nameplate, 0, Qt.AlignmentFlag.AlignRight)
 
         # --- 実験: every optional feature behind one switch -------------------------
         self._build_lab_drawer(lab_layout)
@@ -695,11 +694,30 @@ class MainWindow(QMainWindow):
 
     def _build_settings_columns(self):
         """配線 / 変換 / アプリ as three side-by-side columns, each scrolling alone."""
+        from .shell import Band
+        # Cards that used to fill the アプリ column now open from the menu bar. They stay
+        # alive (the tick updates their widgets) but are shown only inside a dialog.
+        app_cards = [self.band_app.body.itemAt(i).widget()
+                     for i in range(self.band_app.body.count())]
+        self._card_pool = dict(zip(('scenes', 'update', 'discord', 'diagnostics'), app_cards[:4]))
+        # The less common conversion cards move to a third column of their own.
+        self.band_advanced = Band('③', '詳細', '必要なときだけ使う調整です。', glyph='🔧 ')
+        convert_cards = [self.band_convert.body.itemAt(i).widget()
+                         for i in range(self.band_convert.body.count())]
+        advanced_titles = ('声の加工', '声の微調整', '抑揚補正', 'AI出力のフォルマント')
+        for card in convert_cards:
+            if card is None or isinstance(card, QPushButton):
+                continue
+            titles = [l.text() for l in card.findChildren(QLabel)
+                      if l.objectName() in ('sectionTitle', 'stepTitle')]
+            if titles and any(titles[0].startswith(t) for t in advanced_titles):
+                self.band_advanced.body.addWidget(card)
+        self.band_advanced.body.addWidget(self.nameplate, 0, Qt.AlignmentFlag.AlignRight)
         columns = QWidget()
         row = QHBoxLayout(columns)
         row.setContentsMargins(20, 6, 20, 0)
         row.setSpacing(18)
-        for band in (self.band_wire, self.band_convert, self.band_app):
+        for band in (self.band_wire, self.band_convert, self.band_advanced):
             self.drawer_tune.body.removeWidget(band)
             band.layout().setContentsMargins(0, 8, 0, 4)
             holder = QWidget()
@@ -736,11 +754,53 @@ class MainWindow(QMainWindow):
         guide = QAction('使い方ガイド', self)
         guide.triggered.connect(self._show_tutorial)
         help_menu.addAction(guide)
+        diagnostics = QAction('診断…', self)
+        diagnostics.triggered.connect(lambda: self._open_card_dialog('diagnostics', '診断', ['diagnostics'], 560))
+        help_menu.addAction(diagnostics)
+        scenes = QAction('シーン（設定プロファイル）…', self)
+        scenes.triggered.connect(lambda: self._open_card_dialog('scenes', 'シーン', ['scenes'], 520))
+        view.addAction(scenes)
+        # macOS moves these three into the Koeiro (application) menu.
         about = QAction('Koeiroについて…', self)
-        about.setMenuRole(QAction.MenuRole.NoRole)
+        about.setMenuRole(QAction.MenuRole.AboutRole)
         about.triggered.connect(self._show_about)
         help_menu.addAction(about)
+        prefs = QAction('設定…', self)
+        prefs.setMenuRole(QAction.MenuRole.PreferencesRole)
+        prefs.setShortcut('Ctrl+,')
+        prefs.triggered.connect(lambda: self._open_card_dialog('settings', '設定', ['discord', 'update'], 560))
+        help_menu.addAction(prefs)
+        check_update = QAction('アップデートを確認…', self)
+        check_update.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)
+        check_update.triggered.connect(lambda: self._check_updates(manual=True))
+        help_menu.addAction(check_update)
         self.action_lab, self.action_guide = lab, guide
+
+    def _open_card_dialog(self, key, title, names, width):
+        """Show cards of the old アプリ column in a window of their own (built on first use)."""
+        from PySide6.QtWidgets import QDialog
+        dialogs = self.__dict__.setdefault('_card_dialogs', {})
+        dialog = dialogs.get(key)
+        if dialog is None:
+            dialog = QDialog(self)
+            dialog.setWindowTitle(title)
+            column = QVBoxLayout(dialog)
+            column.setContentsMargins(16, 14, 16, 14)
+            column.setSpacing(12)
+            for name in names:
+                column.addWidget(self._card_pool[name])
+            column.addStretch(1)
+            close_row = QHBoxLayout()
+            close_row.addStretch(1)
+            close = QPushButton('閉じる')
+            close.clicked.connect(dialog.close)
+            close_row.addWidget(close)
+            column.addLayout(close_row)
+            dialog.setMinimumWidth(width)
+            dialogs[key] = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _show_about(self):
         """Credits: the original project, its license and the models this app builds on."""
