@@ -577,7 +577,11 @@ class MainWindow(QMainWindow):
                           '同時通訳: 日本語の発話を英語音声に変えて出力します（実験室②が必要）')
         self.mode.setMinimumHeight(34)
         self.mode.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        mode_row.addRow('変換モード', self.mode)
+        mode_caption = QLabel('変換モード　<span style="font-size:11px; color:gray;">'
+                              '⌘1〜3で切り替え</span>')
+        mode_caption.setTextFormat(Qt.TextFormat.RichText)
+        mode_caption.setWordWrap(True)
+        mode_row.addRow(mode_caption, self.mode)
         self.voice_quick = QComboBox()
         self.voice_quick.setMinimumHeight(34)
         self.voice_quick.setToolTip('変換先の声です。右の声リストと同じ選択を共有します。')
