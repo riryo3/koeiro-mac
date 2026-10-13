@@ -296,7 +296,7 @@ class MeterStrip(QWidget):
             painter.drawRoundedRect(xs[index] - 8, gate_y - 4, 8, 9, 2, 2)
             painter.drawLine(xs[1] + bar_width + 2, gate_y, xs[1] + bar_width + 8, gate_y)
             small = painter.font()
-            small.setPointSize(8)
+            small.setPointSize(7)   # "出力ゲート" has to fit between the bars and the fader
             painter.setFont(small)
             label_y = gate_y - 15
             while any(abs(label_y - other) < 28 for other in used_label_y):
@@ -1497,10 +1497,12 @@ def stylesheet(asset_dir):
         QTabWidget::pane { border: 1px solid %(border)s; border-radius: 10px; background: %(card)s; }
         QTabBar::tab { padding: 8px 12px; color: %(muted)s; }
         QTabBar::tab:selected { color: %(text)s; background: %(card)s; }
-        QSlider::groove:vertical { background: %(track)s; width: 6px; border-radius: 3px; }
-        QSlider::sub-page:vertical { background: %(track)s; border-radius: 3px; }
-        QSlider::handle:vertical { background: #ffffff; border: 1px solid %(live)s;
-                                   height: 14px; width: 26px; margin: 0 -10px; border-radius: 4px; }
+        QSlider::groove:vertical { background: #c3cbd9; width: 8px; border-radius: 4px; }
+        QSlider::sub-page:vertical { background: #c3cbd9; border-radius: 4px; }
+        QSlider::add-page:vertical { background: %(live)s; border-radius: 4px; }
+        QSlider::handle:vertical { background: #ffffff; border: 2px solid %(live)s;
+                                   height: 16px; width: 34px; margin: 0 -14px; border-radius: 5px; }
+        QSlider::handle:vertical:hover { background: %(press_light)s; }
         QSlider::handle:vertical:pressed { background: %(press_light)s; }
         QSlider::groove:horizontal { background: %(track)s; height: 5px; border-radius: 2px; }
         QSlider::handle:horizontal { background: #ffffff; border: 1px solid %(border_dark)s;
