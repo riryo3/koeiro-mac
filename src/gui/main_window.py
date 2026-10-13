@@ -192,7 +192,9 @@ class MainWindow(QMainWindow):
         self.help_button = self.header.help_button
 
         body = QWidget()
+        self._body = body
         body_row = QHBoxLayout(body)
+        self._body_row = body_row
         body_row.setContentsMargins(0, 0, 0, 0)
         body_row.setSpacing(0)
         outer.addWidget(body, 1)
@@ -930,6 +932,8 @@ class MainWindow(QMainWindow):
     def _build_menu_bar(self):
         """声リスト / 実験 / 使い方ガイド live in the menu bar instead of header buttons."""
         self._voice_user_choice = None
+        self._voice_wanted = True
+        self._voice_floating = False
         menu_bar = self.menuBar()
         control = menu_bar.addMenu('操作')
         self.action_toggle = QAction('Start / Stop', self)
@@ -1177,6 +1181,27 @@ class MainWindow(QMainWindow):
         self._voice_user_choice = checked
         self._toggle_voice_panel(collapsed=not checked)
 
+    def _place_voice_panel(self):
+        """On a narrow window the voice list floats over the stage instead of squeezing it."""
+        panel = self.voice_panel
+        body = self._body
+        overlay = self.width() < 1500
+        floating = getattr(self, '_voice_floating', False)
+        if overlay and not floating:
+            self._body_row.removeWidget(panel)
+            panel.setParent(body)
+            self._voice_floating = True
+            panel.setVisible(self._voice_wanted)
+        elif not overlay and floating:
+            panel.setParent(None)
+            self._body_row.addWidget(panel)
+            self._voice_floating = False
+            panel.setVisible(self._voice_wanted)
+        if self._voice_floating:
+            panel.setGeometry(body.width() - panel.width(), 0, panel.width(), body.height())
+            if panel.isVisible():
+                panel.raise_()
+
     def _auto_fold_voice_list(self):
         """A narrow window (small laptop) folds the voice list unless the user chose."""
         if getattr(self, '_voice_user_choice', None) is not None or not hasattr(self, 'voice_panel'):
@@ -1392,7 +1417,9 @@ class MainWindow(QMainWindow):
         panel = self.voice_panel
         if collapsed is None:
             collapsed = panel.isVisible()
+        self._voice_wanted = not collapsed
         panel.set_collapsed(collapsed)
+        self._place_voice_panel()
         if hasattr(self, 'action_voice_list') and self.action_voice_list.isChecked() == collapsed:
             self.action_voice_list.blockSignals(True)
             self.action_voice_list.setChecked(not collapsed)
@@ -1534,6 +1561,7 @@ class MainWindow(QMainWindow):
         """Open drawers follow the right edge; no widget is positioned by hand."""
         super().resizeEvent(event)
         self._auto_fold_voice_list()
+        self._place_voice_panel()
         self._place_drawers()
 
     def showEvent(self, event):
