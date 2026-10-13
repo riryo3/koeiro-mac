@@ -909,6 +909,9 @@ class MainWindow(QMainWindow):
         self.action_mute.toggled.connect(lambda checked: self.mute_button.setChecked(checked))
         control.addAction(self.action_mute)
         self.voice_menu = menu_bar.addMenu('声')
+        # シーン: the settings dialog on top, then every saved scene to load with one click.
+        self.scene_menu = menu_bar.addMenu('シーン')
+        self.scene_menu.aboutToShow.connect(self._rebuild_scene_menu)
         view = menu_bar.addMenu('表示')
         self.action_voice_list = QAction('声リスト', self)
         self.action_voice_list.setCheckable(True)
@@ -934,9 +937,6 @@ class MainWindow(QMainWindow):
         diagnostics = QAction('診断…', self)
         diagnostics.triggered.connect(lambda: self._open_card_dialog('diagnostics', '診断', ['diagnostics'], 560))
         help_menu.addAction(diagnostics)
-        scenes = QAction('シーン（設定プロファイル）…', self)
-        scenes.triggered.connect(lambda: self._open_card_dialog('scenes', 'シーン', ['scenes'], 520))
-        view.addAction(scenes)
         # macOS moves these three into the Koeiro (application) menu.
         about = QAction('Koeiroについて…', self)
         about.setMenuRole(QAction.MenuRole.AboutRole)
@@ -954,6 +954,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(check_update)
         self.action_lab, self.action_guide = lab, guide
         self._rebuild_voice_menu()
+        self._rebuild_scene_menu()
 
     def _open_card_dialog(self, key, title, names, width):
         """Show cards of the old アプリ column in a window of their own (built on first use)."""
@@ -1103,6 +1104,46 @@ class MainWindow(QMainWindow):
         """Combo index for a saved mode; a mode that is not offered (translate) becomes AI Voice."""
         index = self.mode.findData(value)
         return index if index >= 0 else max(0, self.mode.findData('ai_voice'))
+
+    def _rebuild_scene_menu(self):
+        """シーン menu: シーン設定…, then the saved scenes (also when there are none yet)."""
+        menu = getattr(self, 'scene_menu', None)
+        if menu is None:
+            return
+        menu.clear()
+        settings_action = QAction('シーン設定…', self)
+        settings_action.triggered.connect(
+            lambda: self._open_card_dialog('scenes', 'シーン', ['scenes'], 520))
+        menu.addAction(settings_action)
+        menu.addSeparator()
+        try:
+            names = self._scene_store().names()
+        except Exception:
+            names = []
+        if not names:
+            empty = QAction('（保存したシーンはまだありません）', self)
+            empty.setEnabled(False)
+            menu.addAction(empty)
+        for name in names:
+            action = QAction(name, self)
+            action.triggered.connect(lambda _checked=False, scene=name: self._apply_scene_named(scene))
+            menu.addAction(action)
+
+    def _apply_scene_named(self, name):
+        """Load a saved scene from the menu; the answer shows under the voice list."""
+        try:
+            scene = self._scene_store().load(name)
+        except KeyError:
+            message = f'「{name}」というシーンは、見つかりませんでした。'
+        else:
+            message = (f'シーン「{name}」を適用しました。' if self._apply_scene(scene)
+                       else '変換中はシーンを切り替えられません。いったんStopしてください。')
+            if hasattr(self, 'scene_combo'):
+                index = self.scene_combo.findText(name)
+                if index >= 0:
+                    self.scene_combo.setCurrentIndex(index)
+        self.voice_note.setText(message)
+        QTimer.singleShot(4000, self._update_voice_info)
 
     def _favorites(self):
         """Starred voices that still exist, in the order they were starred."""
