@@ -736,7 +736,26 @@ class MainWindow(QMainWindow):
         guide = QAction('使い方ガイド', self)
         guide.triggered.connect(self._show_tutorial)
         help_menu.addAction(guide)
+        about = QAction('Koeiroについて…', self)
+        about.setMenuRole(QAction.MenuRole.NoRole)
+        about.triggered.connect(self._show_about)
+        help_menu.addAction(about)
         self.action_lab, self.action_guide = lab, guide
+
+    def _show_about(self):
+        """Credits: the original project, its license and the models this app builds on."""
+        from src.version import APP_VERSION
+        QMessageBox.about(self, 'Koeiroについて', (
+            f'<h3>Koeiro（声彩） v{APP_VERSION}</h3>'
+            '<p>このアプリは、<b>heynegix さん</b>が作った Koeiro を、Mac（Apple Silicon）で動かすための'
+            '<b>非公式</b>の対応版です。基本の仕組みとデザインは、すべて元の作者によるものです。'
+            'ありがとうございます。</p>'
+            '<p>元のプロジェクト: <a href="https://github.com/heynegix/koeiro">github.com/heynegix/koeiro</a>'
+            '（MIT License）</p>'
+            '<p>使っている主な技術: MeanVC2（Apache-2.0）、LavaSR（Apache-2.0）、Vocos（MIT）、'
+            'WavLM、PySide6 / Qt（LGPLv3）、PortAudio / sounddevice、PyTorch。'
+            '詳しくは LICENSE と THIRD_PARTY_NOTICES.md を見てください。</p>'
+            '<p>Mac 版の変更は MAC.md にまとめています。</p>'))
 
     def _voice_list_menu_toggled(self, checked):
         # An explicit choice wins over the automatic fold on a narrow window.
