@@ -318,10 +318,10 @@ class MainWindow(QMainWindow):
         self.relay = Relay()
         self.relay.setFixedWidth(300)
         self.relay.tapped.connect(self._toggle_transport)
-        self.latency_value = QLabel('-- ms')
-        self.latency_value.setObjectName('latencyValue')
-        self.latency_value.setMinimumWidth(64)
-        self.latency_value.setToolTip('概算のバッファ遅延（エンドツーエンドの実測値ではありません）')
+        self.latency_value = QLabel('遅延 --')
+        self.latency_value.setObjectName('muted')
+        self.latency_value.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.latency_value.setToolTip('遅延の目安です（実測値ではありません）。')
         # The caveat lives in the tooltip above; the label stays (the engine writes to
         # it) but takes no room.
         self.latency = QLabel()
@@ -352,6 +352,7 @@ class MainWindow(QMainWindow):
         self.mute_button.setObjectName('mute')
         self.mute_button.setCheckable(True)
         self.mute_button.setMinimumHeight(44)
+        self.mute_button.setFixedWidth(112)   # "ミュート中" must not change the size
         self.mute_button.setToolTip('出力とモニターの音を、すぐに消します（Mキー）。もう一度押すと、戻ります。')
         self.mute_button.toggled.connect(self._mute_toggled)
         transport_layout.addWidget(self.mute_button)
@@ -386,8 +387,11 @@ class MainWindow(QMainWindow):
         self.ai_banner_note.setTextFormat(Qt.TextFormat.PlainText)
         ai_column.addWidget(self.ai_banner_note)
         transport_layout.addLayout(ai_column, 1)
-        transport_layout.addWidget(self.relay)
-        transport_layout.addWidget(self.latency_value)
+        relay_box = QVBoxLayout()
+        relay_box.setSpacing(0)
+        relay_box.addWidget(self.relay)
+        relay_box.addWidget(self.latency_value)
+        transport_layout.addLayout(relay_box)
         stage_layout.addWidget(transport)
         self.transport_bar = transport
         self.stage_foot = self.nameplate
@@ -4284,7 +4288,14 @@ class MainWindow(QMainWindow):
         running = snapshot.state == 'Running' and not snapshot.error
         kind = 'error' if snapshot.error else ('running' if running else 'stopped')
         self.relay.set_state(kind)
-        self.relay.set_level(self._display_input if running else 0.0)
+        if running:
+            meter = self.input_bar
+            gate = getattr(self.controller.engine.chain.gate, '_opened', False)
+            self.relay.set_activity(meter._fraction(self._display_input), bool(gate),
+                                    meter._fraction(self._display_output))
+        else:
+            self.relay.set_activity(0.0, False, 0.0)
+        self._set_latency_estimate()
         self.header.set_badge(kind)
         # The error no longer pushes the stage around: it opens a copyable window.
         self.stage_error.setVisible(False)
@@ -4384,12 +4395,53 @@ class MainWindow(QMainWindow):
             text += f" · DSP内部遅延: {delay:.1f} ms"
             text += "\n処理時間とDSP内部遅延は別の値です。"
             headline = reported
-        self.latency_value.setText(f"{headline:.0f} ms")
+        self._set_latency_estimate(headline)
         # The stage keeps the one number and its one caveat; the read-out behind the
         # numbers lives in 診断. Both used to be written to the same label, and the
         # stage's copy was left empty because this line rebound the name.
         self.latency.setText("いずれもエンドツーエンドの実測値ではありません。")
         self.latency_detail.setText(text)
+
+    def _set_latency_estimate(self, io_ms=None):
+        """The number under the three lamps: audio I/O plus what the AI route adds.
+
+        The old figure was the audio-device buffer alone (about 70 ms) and left out the
+        AI's look-ahead and pre-roll (about 0.8 s together), so it looked far shorter than
+        the real delay. This is still an estimate, never a measurement.
+        """
+        if io_ms is None:
+            io_ms = getattr(self, '_last_io_ms', 20.0)
+        self._last_io_ms = io_ms
+        parts = [f'音声機器の入出力 約{io_ms:.0f} ms']
+        extra = 0.0
+        note = ''
+        try:
+            if self.mode.currentData() == 'ai_voice' and self.router is not None:
+                from src.vc.models import profile
+                model = self.ai_model.currentData()
+                if is_meanvc2(model):
+                    if self.ai_delivery.currentData() == 'streaming':
+                        selected = profile(model)
+                        buffer_ms = float(selected.get('model_buffer_ms', 0))
+                        preroll_ms = float(selected.get('startup_chunks', 0))*120
+                        extra = buffer_ms + preroll_ms
+                        parts += [f'AIの先読み {buffer_ms:.0f} ms', f'出力の準備 {preroll_ms:.0f} ms']
+                    else:
+                        note = '話し終えてから変換'
+        except Exception:
+            pass
+        total = io_ms + extra
+        if note:
+            text = f'遅延 {note}'
+        elif total >= 500:
+            text = f'遅延の目安 約{total/1000:.1f}秒'
+        else:
+            text = f'遅延の目安 約{total:.0f} ms'
+        tooltip = '\n'.join(parts + [f'合計の目安 約{total:.0f} ms（実測値ではありません）'])
+        if text != self.latency_value.text():
+            self.latency_value.setText(text)
+        if tooltip != self.latency_value.toolTip():
+            self.latency_value.setToolTip(tooltip)
 
     def _restore_position(self):
         if self.settings.window_position:

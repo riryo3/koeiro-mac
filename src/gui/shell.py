@@ -596,10 +596,14 @@ class Relay(QWidget):
         self._running = False
         self._error = False
         self._level = 0.0
+        # Real activity of the three points, 0..1 each, with a fast attack and a short
+        # decay so they flicker like indicator lamps.
+        self._act = [0.0, 0.0, 0.0]
         self.setFixedHeight(self.HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip('クリックすると Start / Stop を切り替えます。')
+        self.setToolTip('3つのランプは実際の動きです。\n入力=マイクの音 / 変換=ゲートを通って変換中 / 出力=出ている音。\n'
+                        'クリックすると Start / Stop を切り替えます。')
 
     def set_state(self, kind):
         """kind: 'stopped', 'running' or 'error'."""
@@ -610,6 +614,12 @@ class Relay(QWidget):
     def set_level(self, value):
         """Feed a 0..1 measured level; only the input point's fill follows it."""
         self._level = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    def set_activity(self, input_level, converting, output_level):
+        """Feed the three lamps: input and output levels (0..1) and whether the gate is open."""
+        for index, value in enumerate((input_level, 1.0 if converting else 0.0, output_level)):
+            self._act[index] = max(max(0.0, min(1.0, float(value))), self._act[index]*0.80)
         self.update()
 
     def paintEvent(self, event: QPaintEvent):
@@ -633,15 +643,29 @@ class Relay(QWidget):
                 colour = QColor(LIVE)
             else:
                 colour = QColor(TEXT_MUTED)
-            filled = index == 1 and (self._running or self._error)
-            painter.setBrush(colour if filled else QColor(BG))
-            painter.setPen(QPen(colour, 2))
-            painter.drawEllipse(centre, radius, radius)
-            if index == 0 and self._level > 0:
-                painter.setBrush(QColor(LIVE))
+            glow = self._act[index]
+            if index == 1 and self._error:
+                glow = 1.0
+            elif index == 1 and self._running:
+                glow = 0.30 + 0.70*glow          # lit while running, brighter while converting
+            elif index == 1:
+                glow = 0.0
+            lit = QColor(DANGER) if (index == 1 and self._error) else QColor(LIVE)
+            if glow > 0.35:
+                halo = QColor(lit)
+                halo.setAlpha(int(110*glow))
                 painter.setPen(Qt.PenStyle.NoPen)
-                inner = max(1, int(radius*self._level))
-                painter.drawEllipse(centre, inner, inner)
+                painter.setBrush(halo)
+                painter.drawEllipse(centre, radius + 4, radius + 4)
+            fill = QColor(lit)
+            fill.setAlpha(int(255*glow))
+            painter.setPen(QPen(lit if glow > 0.05 else colour, 2))
+            painter.setBrush(QColor(BG))
+            painter.drawEllipse(centre, radius, radius)
+            if glow > 0.02:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(fill)
+                painter.drawEllipse(centre, radius, radius)
         font = painter.font()
         font.setPointSize(9)
         painter.setFont(font)
