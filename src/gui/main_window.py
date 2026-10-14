@@ -258,6 +258,7 @@ class MainWindow(QMainWindow):
         strip_layout.setContentsMargins(0, 12, 0, 12)   # rows that should not touch the edges add their own margin
         strip_layout.setSpacing(6)
         meter_caption = QLabel('レベル（dBFS）')
+        self.meter_caption = meter_caption
         meter_caption.setObjectName('muted')
         meter_caption.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         # The colour key sits at the top, under the title (it used to hang at the bottom).
@@ -265,6 +266,7 @@ class MainWindow(QMainWindow):
                            '<span style="color:#d9a21b">■</span> 大きめ　'
                            '<span style="color:#dc2626">■</span> 音割れ')
         meter_key.setObjectName('muted')
+        self.meter_key = meter_key
         meter_key.setTextFormat(Qt.TextFormat.RichText)
         meter_key.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         # Title and key are centred over the pair of bars: the bars fill the meter widget,
@@ -342,7 +344,7 @@ class MainWindow(QMainWindow):
                                '線のダブルクリック、または下のボタンで、おすすめの値に戻ります。右の縦のつまみは、Gain（音量）です。')
         # 簡易表示: Start/Stop in one button and ミュート, above the meters (hidden otherwise).
         self.compact_bar = QWidget()
-        compact_row = QHBoxLayout(self.compact_bar)
+        compact_row = QVBoxLayout(self.compact_bar)   # stacked: the window is only as wide as the meters
         compact_row.setContentsMargins(12, 0, 8, 0)
         compact_row.setSpacing(6)
         self.compact_toggle = QPushButton('Start')
@@ -354,8 +356,8 @@ class MainWindow(QMainWindow):
         self.compact_mute.setObjectName('mute')
         self.compact_mute.setCheckable(True)
         self.compact_mute.setMinimumHeight(44)
-        compact_row.addWidget(self.compact_toggle, 1)
-        compact_row.addWidget(self.compact_mute, 1)
+        compact_row.addWidget(self.compact_toggle)
+        compact_row.addWidget(self.compact_mute)
         self.compact_bar.setVisible(False)
         strip_layout.insertWidget(0, self.compact_bar)
         body_row.insertWidget(0, meter_strip)
@@ -1282,7 +1284,7 @@ class MainWindow(QMainWindow):
         spacers are derived from it, so the bars and the Gain cap stay centred on the
         reset button (32 px on each side) at every width.
         """
-        bar = max(16, min(28, 2*round(self.width()/110)))
+        bar = 12 if self._compact else max(16, min(28, 2*round(self.width()/110)))
         if not force and bar == getattr(self, '_meter_bar', None):
             return
         self._meter_bar = bar
@@ -1333,17 +1335,21 @@ class MainWindow(QMainWindow):
             self._centre_widget.setVisible(False)
             self._toggle_voice_panel(collapsed=True)
             self.compact_bar.setVisible(True)
+            self.meter_caption.setVisible(False)
+            self.meter_key.setVisible(False)
             self.meter_reset.setText('おすすめ')
             self._sync_compact_buttons()
             self.action_voice_list.setEnabled(False)
             self.setMinimumSize(0, 0)
             self._fit_meter_width(force=True)
             self.centralWidget().layout().activate()
-            self.resize(self.meter_strip.width(), 640)
+            self.resize(self.meter_strip.width(), 600)
         else:
             self._compact = False
             self._centre_widget.setVisible(True)
             self.compact_bar.setVisible(False)
+            self.meter_caption.setVisible(True)
+            self.meter_key.setVisible(True)
             self.meter_reset.setText('Gain・ゲートをおすすめに')
             self.action_voice_list.setEnabled(True)
             self.setMinimumSize(self._normal_minimum)
