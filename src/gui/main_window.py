@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
         from .shell import MeterStrip
         meter_strip = QFrame()
         meter_strip.setObjectName('meterStrip')
-        meter_strip.setFixedWidth(236)
+        meter_strip.setFixedWidth(228)
         strip_layout = QVBoxLayout(meter_strip)
         strip_layout.setContentsMargins(0, 12, 0, 12)   # rows that should not touch the edges add their own margin
         strip_layout.setSpacing(6)
@@ -284,7 +284,7 @@ class MainWindow(QMainWindow):
         meter_row.setContentsMargins(0, 0, 0, 0)
         # The bars and the Gain cap are centred on the button below: 32 px of room on both
         # sides (the left side holds the input gate number, drawn partly outside the button).
-        self.input_bar.setFixedWidth(158)
+        self.input_bar.setFixedWidth(150)
         meter_row.addWidget(self.input_bar)
         from .shell import Fader
         fader_column = QVBoxLayout()
@@ -304,7 +304,7 @@ class MainWindow(QMainWindow):
         readouts = QHBoxLayout()
         readouts.setSpacing(0)
         readouts.setContentsMargins(0, 0, 0, 0)
-        readouts.addSpacing(39)
+        readouts.addSpacing(37)
         self.input_db = QLabel('入力\n−∞')
         self.output_db = QLabel('出力\n−∞')
         self.gain_fader_label = QLabel('Gain\n+0.0')
@@ -314,8 +314,8 @@ class MainWindow(QMainWindow):
             label.setFixedWidth(width)
             readouts.addWidget(label)
             if index == 0:
-                readouts.addSpacing(14)   # the shared scale column lies between the two bars
-        readouts.addSpacing(29)
+                readouts.addSpacing(10)   # the shared scale column lies between the two bars
+        readouts.addSpacing(25)   # puts the Gain label 2 px left of the fader's centre line
         self.gain_fader_label.setObjectName('muted')
         self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.gain_fader_label.setFixedWidth(44)

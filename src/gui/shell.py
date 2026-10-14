@@ -240,7 +240,7 @@ class MeterStrip(QWidget):
         top, bottom = 8, 8
         height = max(10, self.height() - top - bottom)
         # [input gate number] [input bar] [shared dB scale] [output bar] [output gate number]
-        bar_width = 28
+        bar_width = 24
         xs = (44, 44 + bar_width + 24)
         return top, height, xs, bar_width
 
