@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
         from .shell import MeterStrip
         meter_strip = QFrame()
         meter_strip.setObjectName('meterStrip')
-        meter_strip.setFixedWidth(268)
+        meter_strip.setFixedWidth(240)
         strip_layout = QVBoxLayout(meter_strip)
         strip_layout.setContentsMargins(12, 12, 8, 12)
         strip_layout.setSpacing(6)
@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
         meter_key.setTextFormat(Qt.TextFormat.RichText)
         meter_key.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         # Title and key are centred over the pair of bars: the bars fill the meter widget,
-        # whose width is the strip minus the Gain fader column (58 px + 8 px gap) on the right.
+        # whose width is the strip minus the Gain fader column (44 px + 4 px gap) on the right.
         title_row = QHBoxLayout()
         title_row.setSpacing(0)
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -276,30 +276,31 @@ class MainWindow(QMainWindow):
         title_column.addWidget(meter_caption)
         title_column.addWidget(meter_key)
         title_row.addLayout(title_column, 1)
-        title_row.addSpacing(66)
+        title_row.addSpacing(48)
         strip_layout.addLayout(title_row)
         self.input_bar = MeterStrip()
         # The meters and, to their right, a vertical Gain fader (like a mixer channel).
         meter_row = QHBoxLayout()
-        meter_row.setSpacing(8)
+        meter_row.setSpacing(4)
         meter_row.addWidget(self.input_bar, 1)
         from .shell import Fader
         fader_column = QVBoxLayout()
+        fader_column.setContentsMargins(0, 9, 0, 9)   # no side margin: the column is only 6 px wider than the cap
         fader_column.setSpacing(4)
         self.gain_fader = Fader(-300, 120, 0)
         fader_column.addWidget(self.gain_fader, 1, Qt.AlignmentFlag.AlignHCenter)
         fader_box = QWidget()
         fader_box.setObjectName('plainRow')
-        fader_box.setFixedWidth(58)
+        fader_box.setFixedWidth(44)
         fader_box.setLayout(fader_column)
         meter_row.addWidget(fader_box)
         strip_layout.addLayout(meter_row, 1)
         # One row of readouts, each centred under its own bar / fader (the bars sit at
-        # x = 54 and 92 inside the meter widget; the fader column is 58 px at the right).
+        # x = 48 and 100 inside the meter widget; the fader column is 44 px at the right).
         readouts = QHBoxLayout()
         readouts.setSpacing(0)
         readouts.setContentsMargins(0, 0, 0, 0)
-        readouts.addSpacing(45)
+        readouts.addSpacing(43)
         self.input_db = QLabel('入力\n−∞')
         self.output_db = QLabel('出力\n−∞')
         self.gain_fader_label = QLabel('Gain\n+0.0')
@@ -309,12 +310,12 @@ class MainWindow(QMainWindow):
             label.setFixedWidth(width)
             readouts.addWidget(label)
             if index == 0:
-                readouts.addSpacing(16)   # the shared scale column lies between the two bars
+                readouts.addSpacing(14)   # the shared scale column lies between the two bars
         readouts.addStretch(1)
-        readouts.addSpacing(8)
+        readouts.addSpacing(4)
         self.gain_fader_label.setObjectName('muted')
         self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.gain_fader_label.setFixedWidth(58)
+        self.gain_fader_label.setFixedWidth(44)
         readouts.addWidget(self.gain_fader_label)
         strip_layout.addLayout(readouts)
         # A visible reset under the meters: a double click alone is hard to discover.
