@@ -314,7 +314,7 @@ class MainWindow(QMainWindow):
         self.input_db = QLabel('入力\n−∞')
         self.output_db = QLabel('出力\n−∞')
         self.gain_fader_label = QLabel('Gain\n+0.0')
-        for index, (label, width) in enumerate(((self.input_db, 38), (self.output_db, 38))):
+        for index, (label, width) in enumerate(((self.input_db, 34), (self.output_db, 34))):
             label.setObjectName('muted')
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setFixedWidth(width)
@@ -329,7 +329,7 @@ class MainWindow(QMainWindow):
         readouts.addStretch(1)   # the row is wider than its items: keep the spare room here, not between them
         strip_layout.addLayout(readouts)
         # A visible reset under the meters: a double click alone is hard to discover.
-        self.meter_reset = QPushButton('Gain・ゲートをおすすめに')
+        self.meter_reset = QPushButton('おすすめに戻す')
         self.meter_reset.setMinimumHeight(44)
         self.meter_reset.setStyleSheet('font-size: 14px; font-weight: 600;')
         self.meter_reset.setToolTip('Gain・入力ゲート・出力ゲートを、おすすめの値に戻します。')
@@ -358,6 +358,18 @@ class MainWindow(QMainWindow):
         self.compact_mute.setMinimumHeight(44)
         compact_row.addWidget(self.compact_toggle)
         compact_row.addWidget(self.compact_mute)
+        self.compact_status = QLabel('')
+        self.compact_status.setObjectName('muted')
+        self.compact_status.setWordWrap(True)
+        self.compact_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.compact_status.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.compact_status.setMinimumHeight(34)   # two lines: the meters below do not jump
+        compact_row.addWidget(self.compact_status)
+        # The status text is set from many places; mirror it while the compact view is on.
+        # setText only when it differs: nothing is shown or hidden from this timer.
+        self._compact_timer = QTimer(self)
+        self._compact_timer.setInterval(400)
+        self._compact_timer.timeout.connect(self._sync_compact_status)
         self.compact_bar.setVisible(False)
         strip_layout.insertWidget(0, self.compact_bar)
         body_row.insertWidget(0, meter_strip)
@@ -1288,18 +1300,24 @@ class MainWindow(QMainWindow):
         if not force and bar == getattr(self, '_meter_bar', None):
             return
         self._meter_bar = bar
-        xs0, scale_gap, out_zone = 44, 24, 40
+        margin, scale_gap, out_zone = 22, 24, 30   # the gate numbers are digits only: little room is needed
+        xs0 = 12 + margin
         out_right = xs0 + 2*bar + scale_gap
         self.input_bar.set_bar_width(bar)
-        self.meter_strip.setFixedWidth(2*bar + 180)
+        self.meter_strip.setFixedWidth(xs0 + 2*bar + scale_gap + out_zone + 32 + margin + 8)
         self.input_bar.setFixedWidth(out_right + out_zone - 6)
         first, second, third = self._readout_spacers
         xs1 = xs0 + bar + scale_gap
-        first.changeSize(xs0 + bar//2 - 19, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-        second.changeSize(bar + scale_gap - 38, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-        third.changeSize(out_right + out_zone - 8 - (xs1 + bar//2 + 19), 1,
+        first.changeSize(xs0 + bar//2 - 17, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
+        second.changeSize(bar + scale_gap - 34, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
+        third.changeSize(out_right + out_zone - 8 - (xs1 + bar//2 + 17) + 0, 1,
                          QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self.meter_strip.layout().invalidate()
+
+    def _sync_compact_status(self):
+        text = self.status.text()
+        if text != self.compact_status.text():
+            self.compact_status.setText(text)
 
     def _sync_compact_buttons(self, *_):
         """The compact Start/Stop and ミュート mirror the real buttons (which stay the source of truth)."""
@@ -1335,6 +1353,8 @@ class MainWindow(QMainWindow):
             self._centre_widget.setVisible(False)
             self._toggle_voice_panel(collapsed=True)
             self.compact_bar.setVisible(True)
+            self._sync_compact_status()
+            self._compact_timer.start()
             self.meter_caption.setVisible(False)
             self.meter_key.setVisible(False)
             self.meter_reset.setText('おすすめ')
@@ -1348,9 +1368,10 @@ class MainWindow(QMainWindow):
             self._compact = False
             self._centre_widget.setVisible(True)
             self.compact_bar.setVisible(False)
+            self._compact_timer.stop()
             self.meter_caption.setVisible(True)
             self.meter_key.setVisible(True)
-            self.meter_reset.setText('Gain・ゲートをおすすめに')
+            self.meter_reset.setText('おすすめに戻す')
             self.action_voice_list.setEnabled(True)
             self.setMinimumSize(self._normal_minimum)
             self.resize(self._normal_size)
@@ -4458,6 +4479,8 @@ class MainWindow(QMainWindow):
         elif input_device.host_api != output_device.host_api:
             hint = ("InputとOutputを同じ方式にしてください。両方 [Windows WASAPI] を推奨。"
                     if sys.platform == "win32" else
+                    "InputとOutputを同じ方式にしてください（Core Audio）。"
+                    if sys.platform == "darwin" else
                     "InputとOutputを同じ方式にしてください（PulseAudio / PipeWire）。")
         elif 'mme' in input_device.host_api.lower() or 'mme' in output_device.host_api.lower():
             hint = ('Input / OutputともWindows WASAPIにしてください（MMEでは音切れを記録しています）。')

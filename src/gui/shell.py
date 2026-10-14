@@ -241,7 +241,7 @@ class MeterStrip(QWidget):
         height = max(10, self.height() - top - bottom)
         # [input gate number] [input bar] [shared dB scale] [output bar] [output gate number]
         bar_width = self.bar_width
-        xs = (44, 44 + bar_width + 24)
+        xs = (34, 34 + bar_width + 24)
         return top, height, xs, bar_width
 
     bar_width = 24
@@ -402,10 +402,10 @@ class MeterStrip(QWidget):
                 align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             else:                # output gate: cap on the bar, number on the right
                 self._cap_later.append((cap, self._drag == 1, False))
-                left = xs[1] + bar_width + 4
+                left = xs[1] + bar_width + 7   # clear of the cap, which reaches 5 px past the bar
                 area = QRect(left, gate_y - 15, max(10, self.width() - left), 28)
                 align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-            painter.drawText(area, align, f'{name}\n{gate_db:.0f} dB')
+            painter.drawText(area, align, f'{gate_db:.0f}')
         if self._out_gate_db is None:
             # Output gate off: a dim handle rests at the floor so it can be dragged up.
             floor_y = self._y(0.0, top, height)

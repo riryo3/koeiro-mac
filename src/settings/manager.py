@@ -2,6 +2,8 @@ from dataclasses import asdict, dataclass, field
 import json
 import logging
 import math
+import platform
+import sys
 from pathlib import Path
 
 from src.processors.dsp_parameters import DSPParameters, MODES, QUALITIES
@@ -32,6 +34,11 @@ def _device(value):
             and 0 < len(value["name"]) <= 512 and 0 < len(value["host_api"]) <= 128):
         return {"name": value["name"], "host_api": value["host_api"]}
     return None
+
+
+def _default_ai_threads():
+    """2 on Apple Silicon (1 -> 2 was clearly faster on an M1 8 GB; 3-4 gained little); else 1."""
+    return 2 if sys.platform == 'darwin' and platform.machine() == 'arm64' else 1
 
 
 @dataclass
@@ -78,7 +85,7 @@ class AppSettings:
     voice_mode: str = "ai_voice"
     ai_model: str = DEFAULT_AI_MODEL
     ai_quality: str = "low_latency"
-    ai_threads: int = 1
+    ai_threads: int = field(default_factory=lambda: _default_ai_threads())
     ai_device: str = "auto"
     ai_brightness: float = 50.0
     ai_low_cut: bool = True
