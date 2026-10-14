@@ -1363,6 +1363,8 @@ class MainWindow(QMainWindow):
             self._normal_size = self.size()
             self._normal_minimum = self.minimumSize()
             self._voice_before_compact = self._voice_wanted
+            if self._guide_overlay is not None:   # an open guide would point at hidden controls
+                self._guide_overlay.skip()
             self._compact = True
             self._centre_widget.setVisible(False)
             self._toggle_voice_panel(collapsed=True)
@@ -1886,8 +1888,8 @@ class MainWindow(QMainWindow):
         block on it. It covers the window while it runs, so a first run cannot switch a
         setting by accident while the explanation is on screen.
         """
-        if getattr(self, '_guide_open', False):
-            return
+        if getattr(self, '_guide_open', False) or getattr(self, '_compact', False):
+            return   # the guide describes the full window: not in the compact view
         from .tutorial import TutorialOverlay
         self._guide_open = True
         overlay = TutorialOverlay(self.centralWidget(), on_page=self._guide_page)
