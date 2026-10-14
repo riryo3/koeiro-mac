@@ -26,7 +26,7 @@ from .shell import GUIDE_DIM
 # says what to do there.
 PAGES = (
     dict(title="Koeiro へようこそ",
-         drawer=None, target="start_button",
+         drawer=None, target="main_toggle",
          body="マイクの声を、選んだ声に変えて出力します。相手に届くのは変換後の声だけです。\n"
               "設定は画面中央の3列（配線・変換・詳細）にまとまっています。順に確かめます。"),
     dict(title="① マイクを選ぶ",
@@ -42,7 +42,7 @@ PAGES = (
          body="逐次は話しながら変換します（帯域復元なし）。一括は話し終えてから変換します。\n"
               "迷ったら一括のままで大丈夫です。あとから変えられます。"),
     dict(title="③ Start して話す",
-         drawer=None, target="start_button",
+         drawer=None, target="main_toggle",
          body="Start で変換を始め、Stop で止めます。右の流れ図（3つの点）を押しても同じです。\n"
               "変換中は「変換」の点だけがシアンになります。"),
     dict(title="困ったときは",

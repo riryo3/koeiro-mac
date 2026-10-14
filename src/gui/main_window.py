@@ -407,8 +407,19 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self._stop)
         self.start_button.setMinimumHeight(44)
         self.stop_button.setMinimumHeight(44)
-        transport_layout.addWidget(self.start_button)
-        transport_layout.addWidget(self.stop_button)
+        # One button does both: "Start" while stopped, "Stop" while running. The two real
+        # buttons stay as the source of truth (their enabled state is read everywhere) but
+        # are never shown.
+        self.start_button.setVisible(False)
+        self.stop_button.setVisible(False)
+        self.main_toggle = QPushButton('Start')
+        self.main_toggle.setObjectName('start')
+        self.main_toggle.setMinimumHeight(44)
+        self.main_toggle.setFixedWidth(96)   # "Start" and "Stop" must not change the size
+        self.main_toggle.setEnabled(False)
+        self.main_toggle.setToolTip('開始 / 停止（スペースキー）')
+        self.main_toggle.clicked.connect(self._toggle_transport)
+        transport_layout.addWidget(self.main_toggle)
         # Mute: silences the output and the monitor at once (M key / 操作 menu).
         self.mute_button = QPushButton('ミュート')
         self.mute_button.setObjectName('mute')
@@ -1325,9 +1336,12 @@ class MainWindow(QMainWindow):
             return
         stopping = self.stop_button.isEnabled()
         available = stopping or self.start_button.isEnabled()
-        if available:   # between the two (starting / stopping) the label stays as it was
-            self.compact_toggle.setText('Stop' if stopping else 'Start')
-        self.compact_toggle.setEnabled(available)
+        for toggle in (self.compact_toggle, getattr(self, 'main_toggle', None)):
+            if toggle is None:
+                continue
+            if available:   # between the two (starting / stopping) the label stays as it was
+                toggle.setText('Stop' if stopping else 'Start')
+            toggle.setEnabled(available)
         muted = self.mute_button.isChecked()
         self.compact_mute.blockSignals(True)
         self.compact_mute.setChecked(muted)
@@ -4571,6 +4585,7 @@ class MainWindow(QMainWindow):
         available = self.input_device.currentData() is not None and self.output_device.currentData() is not None
         self.start_button.setEnabled(stopped and available and not self._closing)
         self.stop_button.setEnabled(not stopped and not self._pending and not self._closing)
+        self._sync_compact_buttons()   # the two real buttons are hidden: they send no enabled-change events
         self.add_voice.setEnabled(stopped and not self._pending and not self._closing and self.voice_dialog is None and self.router is not None)
         self.use_voice.setEnabled(stopped and not self._pending and not self._closing and self.voice_dialog is None and self.router is not None)
         # The rail pitch slider only means something on the DSP path.
@@ -4579,6 +4594,7 @@ class MainWindow(QMainWindow):
                                       and self.mode.currentData() == 'female_dsp')
         if self.voice_dialog is not None:
             self.start_button.setEnabled(False)
+            self._sync_compact_buttons()
             self.ai_restart.setEnabled(False)
             self.mode.setEnabled(False)
             self.ai_model.setEnabled(False)
@@ -4630,6 +4646,7 @@ class MainWindow(QMainWindow):
             if busy:
                 self.start_button.setEnabled(False)
                 self.stop_button.setEnabled(False)
+                self._sync_compact_buttons()
         input_peak, output_peak = self.controller.engine.take_peaks()
         # Visual-only decay at 30 Hz; callback just publishes current peaks.
         self._display_input = max(input_peak, self._display_input * 0.8) if snapshot.state == "Running" else 0
