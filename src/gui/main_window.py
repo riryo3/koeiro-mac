@@ -220,6 +220,7 @@ class MainWindow(QMainWindow):
         self.centre_col.addWidget(stage_scroll, 0)
         body_row.addWidget(centre, 1)
         self.centre_scroll = stage_scroll
+        self._centre_widget = centre
 
         # Stage state: an error line at the top, hidden unless the engine reported one.
         self.stage_error = QLabel('')
@@ -339,6 +340,24 @@ class MainWindow(QMainWindow):
                                'グレーの境目の線（左に小さなつまみ）を上下にドラッグすると、ゲートを調整できます。\n'
                                '入力側=これ以下は変換に送られません / 出力側=AIの無音ノイズを消します。\n'
                                '線のダブルクリック、または下のボタンで、おすすめの値に戻ります。右の縦のつまみは、Gain（音量）です。')
+        # 簡易表示: Start/Stop in one button and ミュート, above the meters (hidden otherwise).
+        self.compact_bar = QWidget()
+        compact_row = QHBoxLayout(self.compact_bar)
+        compact_row.setContentsMargins(12, 0, 8, 0)
+        compact_row.setSpacing(6)
+        self.compact_toggle = QPushButton('Start')
+        self.compact_toggle.setObjectName('start')
+        self.compact_toggle.setMinimumHeight(44)
+        self.compact_toggle.setEnabled(False)
+        self.compact_toggle.clicked.connect(self._toggle_transport)
+        self.compact_mute = QPushButton('ミュート')
+        self.compact_mute.setObjectName('mute')
+        self.compact_mute.setCheckable(True)
+        self.compact_mute.setMinimumHeight(44)
+        compact_row.addWidget(self.compact_toggle, 1)
+        compact_row.addWidget(self.compact_mute, 1)
+        self.compact_bar.setVisible(False)
+        strip_layout.insertWidget(0, self.compact_bar)
         body_row.insertWidget(0, meter_strip)
         self.meter_strip = meter_strip
         self._fit_meter_width(force=True)
@@ -384,6 +403,8 @@ class MainWindow(QMainWindow):
         self.mute_button.setFixedWidth(112)   # "ミュート中" must not change the size
         self.mute_button.setToolTip('出力とモニターの音を、すぐに消します（Mキー）。もう一度押すと、戻ります。')
         self.mute_button.toggled.connect(self._mute_toggled)
+        self.compact_mute.toggled.connect(self.mute_button.setChecked)
+        self.mute_button.toggled.connect(self._sync_compact_buttons)
         transport_layout.addWidget(self.mute_button)
         # Shown only while the AI is broken or has stopped: one click to bring it back.
         self.ai_alert_button = QPushButton('AIを再起動')
@@ -1245,6 +1266,9 @@ class MainWindow(QMainWindow):
         After a menu closes or the style is re-applied, Qt can raise tooltips for widgets
         the pointer is nowhere near (and macOS leaves them up).
         """
+        if (event.type() == QEvent.Type.EnabledChange and hasattr(self, 'compact_mute')
+                and hasattr(self, 'stop_button') and watched in (self.start_button, self.stop_button)):
+            QTimer.singleShot(0, self._sync_compact_buttons)
         if event.type() == QEvent.Type.ToolTip and isinstance(watched, QWidget):
             under = QApplication.widgetAt(QCursor.pos())
             if under is None or not (under is watched or watched.isAncestorOf(under)):
@@ -1275,11 +1299,26 @@ class MainWindow(QMainWindow):
                          QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self.meter_strip.layout().invalidate()
 
+    def _sync_compact_buttons(self, *_):
+        """The compact Start/Stop and ミュート mirror the real buttons (which stay the source of truth)."""
+        if not hasattr(self, 'compact_toggle'):
+            return
+        stopping = self.stop_button.isEnabled()
+        available = stopping or self.start_button.isEnabled()
+        if available:   # between the two (starting / stopping) the label stays as it was
+            self.compact_toggle.setText('Stop' if stopping else 'Start')
+        self.compact_toggle.setEnabled(available)
+        muted = self.mute_button.isChecked()
+        self.compact_mute.blockSignals(True)
+        self.compact_mute.setChecked(muted)
+        self.compact_mute.blockSignals(False)
+        self.compact_mute.setText('ミュート中' if muted else 'ミュート')
+
     def _set_compact(self, on):
-        """Meters, Gain and Start / Stop / ミュート only, in a small window; restores the full window.
+        """A narrow, tall window: Start/Stop, ミュート, the meters with Gain, and おすすめ.
 
         Only the user's choice calls this (never a timer), so hiding and showing widgets
-        here cannot disturb clicks.
+        here cannot disturb clicks. Leaving it restores the full window.
         """
         on = bool(on)
         if on == self._compact:
@@ -1291,23 +1330,22 @@ class MainWindow(QMainWindow):
             self._normal_minimum = self.minimumSize()
             self._voice_before_compact = self._voice_wanted
             self._compact = True
-            self.settings_columns.setVisible(False)
+            self._centre_widget.setVisible(False)
             self._toggle_voice_panel(collapsed=True)
-            self.relay.setVisible(False)
-            self.latency_value.setVisible(False)
+            self.compact_bar.setVisible(True)
+            self.meter_reset.setText('おすすめ')
+            self._sync_compact_buttons()
             self.action_voice_list.setEnabled(False)
             self.setMinimumSize(0, 0)
+            self._fit_meter_width(force=True)
             self.centralWidget().layout().activate()
-            self.centre_col.setAlignment(self.centre_scroll, Qt.AlignmentFlag.AlignTop)
-            width = max(self.minimumSizeHint().width(), 800)
-            self.resize(width, 620)
+            self.resize(self.meter_strip.width(), 640)
         else:
             self._compact = False
-            self.settings_columns.setVisible(True)
-            self.relay.setVisible(True)
-            self.latency_value.setVisible(True)
+            self._centre_widget.setVisible(True)
+            self.compact_bar.setVisible(False)
+            self.meter_reset.setText('Gain・ゲートをおすすめに')
             self.action_voice_list.setEnabled(True)
-            self.centre_col.setAlignment(self.centre_scroll, Qt.Alignment())
             self.setMinimumSize(self._normal_minimum)
             self.resize(self._normal_size)
             self._toggle_voice_panel(collapsed=not self._voice_before_compact)
