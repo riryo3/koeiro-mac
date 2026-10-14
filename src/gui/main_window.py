@@ -430,6 +430,7 @@ class MainWindow(QMainWindow):
         relay_box.addWidget(self.latency_value)
         transport_layout.addLayout(relay_box)
         stage_layout.addWidget(transport)
+        stage_layout.addStretch(1)   # a short window (簡易表示) keeps the row at the top
         self.transport_bar = transport
         self.stage_foot = self.nameplate
 
@@ -959,6 +960,7 @@ class MainWindow(QMainWindow):
         self._voice_user_choice = None
         self._voice_wanted = True
         self._voice_floating = False
+        self._compact = False
         menu_bar = self.menuBar()
         control = menu_bar.addMenu('操作')
         self.action_toggle = QAction('Start / Stop', self)
@@ -1003,6 +1005,12 @@ class MainWindow(QMainWindow):
         self.action_voice_list.setShortcut('Ctrl+L')
         self.action_voice_list.toggled.connect(self._voice_list_menu_toggled)
         view.addAction(self.action_voice_list)
+        # 簡易表示: once everything is set, only the meters, the Gain fader and Start / Stop / ミュート.
+        self.action_compact = QAction('簡易表示（メーターと Start / Stop だけ）', self)
+        self.action_compact.setCheckable(True)
+        self.action_compact.setShortcut('Ctrl+Shift+M')
+        self.action_compact.toggled.connect(self._set_compact)
+        view.addAction(self.action_compact)
         from . import shell
         view.addSeparator()
         # 外観 and テーマカラー are twin submenus, so they read as one group.
@@ -1267,6 +1275,45 @@ class MainWindow(QMainWindow):
                          QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self.meter_strip.layout().invalidate()
 
+    def _set_compact(self, on):
+        """Meters, Gain and Start / Stop / ミュート only, in a small window; restores the full window.
+
+        Only the user's choice calls this (never a timer), so hiding and showing widgets
+        here cannot disturb clicks.
+        """
+        on = bool(on)
+        if on == self._compact:
+            return
+        if on:
+            if self.isFullScreen() or self.isMaximized():
+                self.showNormal()
+            self._normal_size = self.size()
+            self._normal_minimum = self.minimumSize()
+            self._voice_before_compact = self._voice_wanted
+            self._compact = True
+            self.settings_columns.setVisible(False)
+            self._toggle_voice_panel(collapsed=True)
+            self.relay.setVisible(False)
+            self.latency_value.setVisible(False)
+            self.action_voice_list.setEnabled(False)
+            self.setMinimumSize(0, 0)
+            self.centralWidget().layout().activate()
+            self.centre_col.setAlignment(self.centre_scroll, Qt.AlignmentFlag.AlignTop)
+            width = max(self.minimumSizeHint().width(), 800)
+            self.resize(width, 620)
+        else:
+            self._compact = False
+            self.settings_columns.setVisible(True)
+            self.relay.setVisible(True)
+            self.latency_value.setVisible(True)
+            self.action_voice_list.setEnabled(True)
+            self.centre_col.setAlignment(self.centre_scroll, Qt.Alignment())
+            self.setMinimumSize(self._normal_minimum)
+            self.resize(self._normal_size)
+            self._toggle_voice_panel(collapsed=not self._voice_before_compact)
+        self._place_voice_panel()
+        self._fit_meter_width()
+
     def _close_voice_panel(self):
         self._voice_user_choice = False if not self._voice_floating else self._voice_user_choice
         self._toggle_voice_panel(collapsed=True)
@@ -1300,7 +1347,7 @@ class MainWindow(QMainWindow):
             if panel.isVisible():
                 panel.raise_()
         # Floating: the strip stays put so the stage never shifts when the list opens or closes.
-        self.voice_tab.setVisible(self._voice_floating or not panel.isVisible())
+        self.voice_tab.setVisible(not self._compact and (self._voice_floating or not panel.isVisible()))
         arrow = '›' if panel.isVisible() else '‹'
         self.voice_tab.setText(f'{arrow}\n\n声\nリ\nス\nト\n\n{arrow}')
         self.voice_tab.setToolTip('声リストを閉じる' if panel.isVisible() else '声リストを開く')
@@ -4860,7 +4907,8 @@ class MainWindow(QMainWindow):
             ai_formant_on=self.ai_formant_toggle.isChecked() if hasattr(self, 'ai_formant_toggle') else self.settings.ai_formant_on,
             ai_formant=(self.ai_formant_amount.value() / 10 if hasattr(self, 'ai_formant_amount')
                         else self.settings.ai_formant),
-            window_size=(self.width(), self.height()),
+            window_size=((self._normal_size.width(), self._normal_size.height())
+                         if self._compact else (self.width(), self.height())),
             window_position=(self.x(), self.y()))
         parameters = self._dsp_parameters()
         self.settings = replace(self.settings, dsp_mode=parameters.mode,
