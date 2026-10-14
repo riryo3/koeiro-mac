@@ -1380,6 +1380,7 @@ class MainWindow(QMainWindow):
             self._fit_meter_width(force=True)
             self.centralWidget().layout().activate()
             self.resize(self.meter_strip.width(), 600)
+            self.setFixedSize(self.size())   # no resizing here; macOS then greys out the full-screen button too
         else:
             self._compact = False
             self._centre_widget.setVisible(True)
@@ -1389,6 +1390,7 @@ class MainWindow(QMainWindow):
             self.meter_key.setVisible(True)
             self.meter_reset.setText('おすすめに戻す')
             self.action_voice_list.setEnabled(True)
+            self.setMaximumSize(16777215, 16777215)   # QWIDGETSIZE_MAX: resizable again
             self.setMinimumSize(self._normal_minimum)
             self.resize(self._normal_size)
             self._toggle_voice_panel(collapsed=not self._voice_before_compact)
