@@ -16,7 +16,11 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
 </p>
 
-> 🍎 **Mac（Apple Silicon）対応ブランチ（非公式）**: 本家 [heynegix/koeiro](https://github.com/heynegix/koeiro)（MIT）からのフォークです。Mac で動かす手順と変更点は [MAC.md](MAC.md) を参照してください。
+> 🍎 **非公式の Mac（Apple Silicon）版**: 本家 [heynegix/koeiro](https://github.com/heynegix/koeiro)（MIT License）のフォークです。本家の作者とは別の人が、個人で作っている非公式の対応です。名前・ロゴ・標準ボイスは、本家の作者の許可を得て使っています。
+>
+> - 使い方: [USAGE_MAC.md](USAGE_MAC.md) ／ 入れ方と変更点: [MAC.md](MAC.md)
+> - 本家への Mac 対応の提案は、[PR #4](https://github.com/heynegix/koeiro/pull/4) で進んでいます（このフォークとは別です）。
+> - このフォークの変更は、AI（Claude）の支援を受けて作りました。Mac mini (M4) の実機（CPU のみ）で動作を確認しています。画面のレイアウトの変更は個人の好みによるもので、本家のデザインへの批判ではありません。
 
 ---
 
