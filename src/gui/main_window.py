@@ -12,7 +12,7 @@ from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QCursor
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFormLayout, QHBoxLayout,
                                QCheckBox, QFrame, QLabel, QLayout, QLineEdit, QMainWindow, QMessageBox,
-                               QPushButton, QScrollArea, QSizePolicy, QSlider,
+                               QPushButton, QScrollArea, QSizePolicy, QSlider, QSpacerItem,
                                QVBoxLayout, QWidget, QDoubleSpinBox, QSpinBox)
 
 from src.audio.controller import AudioController
@@ -304,7 +304,10 @@ class MainWindow(QMainWindow):
         readouts = QHBoxLayout()
         readouts.setSpacing(0)
         readouts.setContentsMargins(0, 0, 0, 0)
-        readouts.addSpacing(37)
+        self._readout_spacers = []
+        for _ in range(3):
+            self._readout_spacers.append(QSpacerItem(1, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum))
+        readouts.addItem(self._readout_spacers[0])
         self.input_db = QLabel('入力\n−∞')
         self.output_db = QLabel('出力\n−∞')
         self.gain_fader_label = QLabel('Gain\n+0.0')
@@ -314,8 +317,8 @@ class MainWindow(QMainWindow):
             label.setFixedWidth(width)
             readouts.addWidget(label)
             if index == 0:
-                readouts.addSpacing(10)   # the shared scale column lies between the two bars
-        readouts.addSpacing(25)   # puts the Gain label 2 px left of the fader's centre line
+                readouts.addItem(self._readout_spacers[1])   # the shared scale column lies between the two bars
+        readouts.addItem(self._readout_spacers[2])   # puts the Gain label 2 px left of the fader's centre line
         self.gain_fader_label.setObjectName('muted')
         self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.gain_fader_label.setFixedWidth(44)
@@ -338,6 +341,7 @@ class MainWindow(QMainWindow):
                                '線のダブルクリック、または下のボタンで、おすすめの値に戻ります。右の縦のつまみは、Gain（音量）です。')
         body_row.insertWidget(0, meter_strip)
         self.meter_strip = meter_strip
+        self._fit_meter_width(force=True)
 
         # The three-point relay answers "where is it stuck" and toggles the transport.
         self.relay = Relay()
@@ -1239,6 +1243,30 @@ class MainWindow(QMainWindow):
                 return True
         return super().eventFilter(watched, event)
 
+    def _fit_meter_width(self, force=False):
+        """Size the level meters and the Gain fader to the window.
+
+        The bar width is the one measure: the strip, the meter widget and the readout
+        spacers are derived from it, so the bars and the Gain cap stay centred on the
+        reset button (32 px on each side) at every width.
+        """
+        bar = max(16, min(28, 2*round(self.width()/110)))
+        if not force and bar == getattr(self, '_meter_bar', None):
+            return
+        self._meter_bar = bar
+        xs0, scale_gap, out_zone = 44, 24, 40
+        out_right = xs0 + 2*bar + scale_gap
+        self.input_bar.set_bar_width(bar)
+        self.meter_strip.setFixedWidth(2*bar + 180)
+        self.input_bar.setFixedWidth(out_right + out_zone - 6)
+        first, second, third = self._readout_spacers
+        xs1 = xs0 + bar + scale_gap
+        first.changeSize(xs0 + bar//2 - 19, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
+        second.changeSize(bar + scale_gap - 38, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
+        third.changeSize(out_right + out_zone - 8 - (xs1 + bar//2 + 19), 1,
+                         QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
+        self.meter_strip.layout().invalidate()
+
     def _close_voice_panel(self):
         self._voice_user_choice = False if not self._voice_floating else self._voice_user_choice
         self._toggle_voice_panel(collapsed=True)
@@ -1637,6 +1665,8 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._auto_fold_voice_list()
         self._place_voice_panel()
+        if hasattr(self, 'meter_strip'):
+            self._fit_meter_width()
         self._place_drawers()
 
     def showEvent(self, event):

@@ -240,9 +240,17 @@ class MeterStrip(QWidget):
         top, bottom = 8, 8
         height = max(10, self.height() - top - bottom)
         # [input gate number] [input bar] [shared dB scale] [output bar] [output gate number]
-        bar_width = 24
+        bar_width = self.bar_width
         xs = (44, 44 + bar_width + 24)
         return top, height, xs, bar_width
+
+    bar_width = 24
+
+    def set_bar_width(self, width):
+        """Bar width in px; the strip around it is sized from this by the window."""
+        if width != self.bar_width:
+            self.bar_width = width
+            self.update()
 
     def _gate_value(self, index):
         """The gate level a line sits at; a switched-off output gate rests at the floor."""
