@@ -252,9 +252,9 @@ class MainWindow(QMainWindow):
         from .shell import MeterStrip
         meter_strip = QFrame()
         meter_strip.setObjectName('meterStrip')
-        meter_strip.setFixedWidth(240)
+        meter_strip.setFixedWidth(236)
         strip_layout = QVBoxLayout(meter_strip)
-        strip_layout.setContentsMargins(12, 12, 8, 12)
+        strip_layout.setContentsMargins(0, 12, 0, 12)   # rows that should not touch the edges add their own margin
         strip_layout.setSpacing(6)
         meter_caption = QLabel('レベル（dBFS）')
         meter_caption.setObjectName('muted')
@@ -270,19 +270,22 @@ class MainWindow(QMainWindow):
         # whose width is the strip minus the Gain fader column (44 px + 4 px gap) on the right.
         title_row = QHBoxLayout()
         title_row.setSpacing(0)
-        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setContentsMargins(12, 0, 8, 0)   # same as the button: centred on the bars and the Gain fader together
         title_column = QVBoxLayout()
         title_column.setSpacing(2)
         title_column.addWidget(meter_caption)
         title_column.addWidget(meter_key)
         title_row.addLayout(title_column, 1)
-        title_row.addSpacing(48)
         strip_layout.addLayout(title_row)
         self.input_bar = MeterStrip()
         # The meters and, to their right, a vertical Gain fader (like a mixer channel).
         meter_row = QHBoxLayout()
-        meter_row.setSpacing(4)
-        meter_row.addWidget(self.input_bar, 1)
+        meter_row.setSpacing(0)
+        meter_row.setContentsMargins(0, 0, 0, 0)
+        # The bars and the Gain cap are centred on the button below: 32 px of room on both
+        # sides (the left side holds the input gate number, drawn partly outside the button).
+        self.input_bar.setFixedWidth(158)
+        meter_row.addWidget(self.input_bar)
         from .shell import Fader
         fader_column = QVBoxLayout()
         fader_column.setContentsMargins(0, 9, 0, 9)   # no side margin: the column is only 6 px wider than the cap
@@ -294,13 +297,14 @@ class MainWindow(QMainWindow):
         fader_box.setFixedWidth(44)
         fader_box.setLayout(fader_column)
         meter_row.addWidget(fader_box)
+        meter_row.addStretch(1)
         strip_layout.addLayout(meter_row, 1)
         # One row of readouts, each centred under its own bar / fader (the bars sit at
         # x = 48 and 100 inside the meter widget; the fader column is 44 px at the right).
         readouts = QHBoxLayout()
         readouts.setSpacing(0)
         readouts.setContentsMargins(0, 0, 0, 0)
-        readouts.addSpacing(43)
+        readouts.addSpacing(39)
         self.input_db = QLabel('入力\n−∞')
         self.output_db = QLabel('出力\n−∞')
         self.gain_fader_label = QLabel('Gain\n+0.0')
@@ -311,8 +315,7 @@ class MainWindow(QMainWindow):
             readouts.addWidget(label)
             if index == 0:
                 readouts.addSpacing(14)   # the shared scale column lies between the two bars
-        readouts.addStretch(1)
-        readouts.addSpacing(4)
+        readouts.addSpacing(29)
         self.gain_fader_label.setObjectName('muted')
         self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.gain_fader_label.setFixedWidth(44)
@@ -323,7 +326,10 @@ class MainWindow(QMainWindow):
         self.meter_reset.setMinimumHeight(44)
         self.meter_reset.setStyleSheet('font-size: 14px; font-weight: 600;')
         self.meter_reset.setToolTip('Gain・入力ゲート・出力ゲートを、おすすめの値に戻します。')
-        strip_layout.addWidget(self.meter_reset)
+        reset_row = QHBoxLayout()
+        reset_row.setContentsMargins(12, 0, 8, 0)
+        reset_row.addWidget(self.meter_reset)
+        strip_layout.addLayout(reset_row)
         meter_strip.setToolTip('入力と出力のピークをdBFSで表示します。黒い線は直近1秒のピークです。\n'
                                '話して、緑〜黄の範囲（-18〜-6 dBFS）に入るのが目安です。\n'
                                'グレーの境目の線（左に小さなつまみ）を上下にドラッグすると、ゲートを調整できます。\n'
