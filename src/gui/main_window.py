@@ -320,6 +320,7 @@ class MainWindow(QMainWindow):
         self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.gain_fader_label.setFixedWidth(44)
         readouts.addWidget(self.gain_fader_label)
+        readouts.addStretch(1)   # the row is wider than its items: keep the spare room here, not between them
         strip_layout.addLayout(readouts)
         # A visible reset under the meters: a double click alone is hard to discover.
         self.meter_reset = QPushButton('Gain・ゲートをおすすめに')
