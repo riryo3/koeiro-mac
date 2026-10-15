@@ -678,7 +678,8 @@ class Relay(QWidget):
     HEIGHT = 46
 
     margin = 44    # room left and right of the outer points (the compact view uses less)
-    show_labels = True   # the compact view shows the lamps only
+    show_labels = True
+    short_labels = False   # the compact view names each lamp with its two-character word only
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -765,7 +766,7 @@ class Relay(QWidget):
             centre = centres[index]
             painter.setPen(QColor(TEXT if index == 1 else TEXT_MUTED))
             painter.drawText(QRect(centre.x()-44, centre.y()+radius+2, 88, 18),
-                             Qt.AlignmentFlag.AlignCenter, f'{label}  {sub}')
+                             Qt.AlignmentFlag.AlignCenter, label if self.short_labels else f'{label}  {sub}')
 
     def mousePressEvent(self, event):
         self.tapped.emit()

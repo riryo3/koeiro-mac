@@ -368,8 +368,8 @@ class MainWindow(QMainWindow):
         # The same three lamps as in the full view, fed from the same numbers.
         self.compact_relay = Relay()
         self.compact_relay.margin = 26
-        self.compact_relay.show_labels = False
-        self.compact_relay.setFixedHeight(28)
+        self.compact_relay.short_labels = True
+        self.compact_relay.setFixedHeight(46)
         self.compact_relay.tapped.connect(self._toggle_transport)
         compact_row.addWidget(self.compact_relay)
         # The status text is set from many places; mirror it while the compact view is on.
