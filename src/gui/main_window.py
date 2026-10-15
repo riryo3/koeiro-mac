@@ -365,6 +365,13 @@ class MainWindow(QMainWindow):
         self.compact_status.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self.compact_status.setMinimumHeight(34)   # two lines: the meters below do not jump
         compact_row.addWidget(self.compact_status)
+        # The same three lamps as in the full view, fed from the same numbers.
+        self.compact_relay = Relay()
+        self.compact_relay.margin = 26
+        self.compact_relay.show_labels = False
+        self.compact_relay.setFixedHeight(28)
+        self.compact_relay.tapped.connect(self._toggle_transport)
+        compact_row.addWidget(self.compact_relay)
         # The status text is set from many places; mirror it while the compact view is on.
         # setText only when it differs: nothing is shown or hidden from this timer.
         self._compact_timer = QTimer(self)
@@ -4808,14 +4815,17 @@ class MainWindow(QMainWindow):
         """
         running = snapshot.state == 'Running' and not snapshot.error
         kind = 'error' if snapshot.error else ('running' if running else 'stopped')
-        self.relay.set_state(kind)
+        for relay in (self.relay, self.compact_relay):
+            relay.set_state(kind)
         if running:
             meter = self.input_bar
             gate = getattr(self.controller.engine.chain.gate, '_opened', False)
-            self.relay.set_activity(meter._fraction(self._display_input), bool(gate),
-                                    meter._fraction(self._display_output))
+            for relay in (self.relay, self.compact_relay):
+                relay.set_activity(meter._fraction(self._display_input), bool(gate),
+                                   meter._fraction(self._display_output))
         else:
-            self.relay.set_activity(0.0, False, 0.0)
+            for relay in (self.relay, self.compact_relay):
+                relay.set_activity(0.0, False, 0.0)
         self._set_latency_estimate()
         self.header.set_badge(kind)
         # The error no longer pushes the stage around: it opens a copyable window.

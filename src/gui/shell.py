@@ -677,6 +677,9 @@ class Relay(QWidget):
     LABELS = (('入力', 'マイク'), ('変換', 'Koeiro'), ('出力', '通話先'))
     HEIGHT = 46
 
+    margin = 44    # room left and right of the outer points (the compact view uses less)
+    show_labels = True   # the compact view shows the lamps only
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('relay')
@@ -713,11 +716,11 @@ class Relay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rect = self.rect()
-        margin = 44
+        margin = self.margin
         radius = 7
         step = ((rect.width() - 2*margin)/(len(self.LABELS) - 1)
                 if rect.width() > 2*margin else 0)
-        centres = [QPoint(int(margin + index*step), rect.height()//2 - 12)
+        centres = [QPoint(int(margin + index*step), rect.height()//2 - (12 if self.show_labels else 0))
                    for index in range(len(self.LABELS))]
         painter.setPen(QPen(QColor(TRACK), 2))
         for left, right in zip(centres, centres[1:]):
@@ -753,6 +756,8 @@ class Relay(QWidget):
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(fill)
                 painter.drawEllipse(centre, radius, radius)
+        if not self.show_labels:
+            return
         font = painter.font()
         font.setPointSize(9)
         painter.setFont(font)
