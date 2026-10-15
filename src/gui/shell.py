@@ -764,7 +764,8 @@ class Relay(QWidget):
         painter.setFont(font)
         for index, (label, sub) in enumerate(self.LABELS):
             centre = centres[index]
-            painter.setPen(QColor(TEXT if index == 1 else TEXT_MUTED))
+            # The full view stresses the middle word; the compact view names all three alike.
+            painter.setPen(QColor(TEXT if index == 1 and not self.short_labels else TEXT_MUTED))
             painter.drawText(QRect(centre.x()-44, centre.y()+radius+2, 88, 18),
                              Qt.AlignmentFlag.AlignCenter, label if self.short_labels else f'{label}  {sub}')
 
