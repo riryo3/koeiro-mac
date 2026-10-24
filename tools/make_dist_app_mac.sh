@@ -62,20 +62,25 @@ RUNSH
   exit 0
 fi
 
-# Run: make the bundle's own python point at the venv so macOS shows "Koeiro"
-# (Dock name, icon, microphone permission). Falls back to the venv python itself.
+# Run: a small runtime app lives outside this signed bundle, in Application Support, and
+# its own python points at the venv, so macOS shows "Koeiro" (Dock name, icon, microphone
+# permission). This bundle is never modified after signing.
+RUNAPP="$DATA/Koeiro.app"
 PY="$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$SRC/.venv/bin/python")"
-if [ "$(readlink "$BUNDLE/Contents/MacOS/python" 2>/dev/null)" != "$PY" ]; then
-  mkdir -p "$BUNDLE/Contents/lib/python3.12" 2>/dev/null &&
-  ln -sfn "$PY" "$BUNDLE/Contents/MacOS/python" 2>/dev/null &&
-  ln -sfn "$SRC/.venv/lib/python3.12/site-packages" "$BUNDLE/Contents/lib/python3.12/site-packages" 2>/dev/null &&
-  printf 'home = %s\nimplementation = CPython\nversion_info = 3.12\ninclude-system-site-packages = false\n' "$(dirname "$PY")" > "$BUNDLE/Contents/pyvenv.cfg" 2>/dev/null
+if [ "$(readlink "$RUNAPP/Contents/MacOS/python" 2>/dev/null)" != "$PY" ] || \
+   [ "$(cat "$RUNAPP/Contents/Resources/VERSION" 2>/dev/null)" != "$VER" ]; then
+  rm -rf "$RUNAPP"
+  mkdir -p "$RUNAPP/Contents/MacOS" "$RUNAPP/Contents/Resources" "$RUNAPP/Contents/lib/python3.12"
+  cp "$BUNDLE/Contents/Info.plist" "$RUNAPP/Contents/Info.plist"
+  cp "$RES/Koeiro.icns" "$RES/VERSION" "$RUNAPP/Contents/Resources/"
+  ln -s "$PY" "$RUNAPP/Contents/MacOS/python"
+  ln -s "$SRC/.venv/lib/python3.12/site-packages" "$RUNAPP/Contents/lib/python3.12/site-packages"
+  printf 'home = %s\nimplementation = CPython\nversion_info = 3.12\ninclude-system-site-packages = false\n' "$(dirname "$PY")" > "$RUNAPP/Contents/pyvenv.cfg"
+  printf '#!/bin/bash\nHERE="$(cd "$(dirname "$0")" && pwd)"\ncd "%s" || exit 1\nexec "$HERE/python" app.py\n' "$SRC" > "$RUNAPP/Contents/MacOS/Koeiro"
+  chmod +x "$RUNAPP/Contents/MacOS/Koeiro"
 fi
-cd "$SRC" || exit 1
-if [ -x "$BUNDLE/Contents/MacOS/python" ] && [ -f "$BUNDLE/Contents/pyvenv.cfg" ]; then
-  exec "$BUNDLE/Contents/MacOS/python" app.py
-fi
-exec "$SRC/.venv/bin/python" app.py
+if [ -n "${KOEIRO_NO_OPEN:-}" ]; then exit 0; fi
+exec open "$RUNAPP"
 LAUNCH
 chmod +x "$APP/Contents/MacOS/Koeiro"
 
