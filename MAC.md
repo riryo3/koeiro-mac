@@ -56,7 +56,16 @@ Mac mini (M4) / macOS / Python 3.12 / **CPU のみ**（MPS は使っていませ
 - 初回ガイドの位置ずれ・二重表示の修正、Mac 向けの文言
 - Apple Silicon では、遅延を減らす推論設定（まとめ処理なし）を既定にする
 
+## アプリ（Koeiro.app）
+- **自分用:** `.venv` を作ったあと `bash tools/make_app_mac.sh`。この checkout の隣に `Koeiro.app` ができ、Dock に置けます（Dock の名前とアイコンは Koeiro になります）。
+- **配布用:** `bash tools/make_dist_app_mac.sh` で `dist/Koeiro.app` と zip（約 10MB）ができます。Python もモデルも入っていません。
+  初回の起動で、ソースを `~/Library/Application Support/Koeiro/koeiro` に置き、Terminal で `tools/koeiro_setup_mac.sh` を走らせます（uv、仮想環境 2 つ、部品、モデル約 2GB、LavaSR。10〜20 分）。2 回目からはすぐ開きます。
+  - 署名はしていません（ad-hoc のみ）。初回は右クリック → 開く。開けないときは、システム設定 → プライバシーとセキュリティ → 「このまま開く」。
+  - 初回準備には、Xcode コマンドラインツール（git）が要ります。無いときは案内が出ます。
+  - BlackHole 2ch は別に入れます（`brew install --cask blackhole-2ch`）。
+  - アプリを新しい版に置き換えると、ソースだけ更新され、モデル・声・設定は残ります。
+
 ## 既知の制限
 - 自動更新（`src/app_update.py`）は Mac 未対応のままです
-- `.app` 化（配布用ビルド）は未対応です
+- `.app` は署名なしです（Apple の公証は未対応）
 - MPS（Mac の GPU）は未対応です
