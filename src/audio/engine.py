@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import logging
 import math
+import os
 import sys
 import time
 
@@ -64,6 +65,8 @@ class AudioEngine:
         # The last 4096 output samples, copied per block for the band meter (observation only).
         self._tap_ring = np.zeros(self.TAP_SIZE, dtype=np.float32)
         self._tap_pos = 0
+        # Diagnostic only: KOEIRO_RECORD=<prefix> writes <prefix>_in.wav / _out.wav on stop.
+        self._rec = ([], []) if os.environ.get("KOEIRO_RECORD") else None
         self.input_peak = self.output_peak = 0.0
         self.underflows = self.overflows = 0
         self._reported_counts = (0, 0)
@@ -261,6 +264,8 @@ class AudioEngine:
             np.logical_not(mask, out=mask)
             np.copyto(audio, 0.0, where=mask)
             self.input_peak = peak_level(audio)
+            if self._rec is not None:
+                self._rec[0].append(audio[:, 0].copy())
             if self.translate_tap.active:
                 self.translate_tap.offer(audio)
             audio = self.chain.process(audio, self.config.sample_rate)
@@ -275,6 +280,8 @@ class AudioEngine:
                 self._mute_gain = target
             self.output_peak = peak_level(audio)
             self._offer_tap(audio)
+            if self._rec is not None:
+                self._rec[1].append(audio[:, 0].copy())
             if self.monitor_player is not None and self.monitor_player.running:
                 self.monitor_tap.offer(audio[:, 0])
             # Broadcast mono to both channels for stereo-only render endpoints.
@@ -341,6 +348,18 @@ class AudioEngine:
         self.chain.stop()
         self.input_peak = self.output_peak = 0.0
         log.info("Stream stop: Underflow=%d Overflow=%d", self.underflows, self.overflows)
+        if self._rec is not None and self._rec[1]:
+            import wave
+            for name, blocks in zip(("in", "out"), self._rec):
+                data = np.clip(np.concatenate(blocks), -1.0, 1.0)
+                path = f'{os.environ["KOEIRO_RECORD"]}_{name}.wav'
+                with wave.open(path, "wb") as handle:
+                    handle.setnchannels(1)
+                    handle.setsampwidth(2)
+                    handle.setframerate(self.config.sample_rate)
+                    handle.writeframes((data * 32767).astype("<i2").tobytes())
+                log.info("Recorded %s: %s (%.1f s)", name, path, len(data) / self.config.sample_rate)
+            self._rec = ([], [])
         log.info("Callback timing: %s; Main timing: %s; diagnostics: %s",
                  self.performance.snapshot(), self.chain.performance.snapshot(), self.diagnostics.snapshot())
 

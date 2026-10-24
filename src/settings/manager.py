@@ -60,6 +60,8 @@ class AppSettings:
     # Off by default: the spectral stage is a user choice, not the shipped route.
     # Off by default: it removes the low band (below ~100 Hz) from the microphone signal.
     input_low_cut: bool = False
+    # On by default: with the input silent the model still emits hiss bursts, no filter removes them.
+    output_silence_mute: bool = True
     output_low_cut: bool = False
     output_low_cut_hz: float = 100.0
     output_high_cut: bool = False
@@ -187,6 +189,8 @@ class AppSettings:
         output_low_cut = data.get("output_low_cut")
         values["output_low_cut"] = output_low_cut if type(output_low_cut) is bool else False
         values["output_low_cut_hz"] = _number(data.get("output_low_cut_hz"), 100.0, 50.0, 400.0)
+        silence_mute = data.get("output_silence_mute")
+        values["output_silence_mute"] = silence_mute if type(silence_mute) is bool else True
         output_high_cut = data.get("output_high_cut")
         values["output_high_cut"] = output_high_cut if type(output_high_cut) is bool else False
         values["output_high_cut_hz"] = _number(data.get("output_high_cut_hz"), 6000.0, 2000.0, 12000.0)

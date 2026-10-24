@@ -170,6 +170,10 @@ class AudioController:
         """Live, in-place: 0 is a pass-through, so switching needs no stream restart."""
         self.engine.chain.denoise.set_strength(strength)
 
+    def set_silence_mute(self, enabled):
+        """Live: the mute only acts on the AI route, after the input has been silent a while."""
+        self.engine.chain.silence_mute.enabled = bool(enabled)
+
     def set_output_low_cut(self, enabled, cutoff_hz=100.0):
         """Live: the chain arms the filter per block, on the AI route only."""
         self.engine.chain.out_low_cut.set_cutoff(cutoff_hz)

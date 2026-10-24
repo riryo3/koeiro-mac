@@ -46,6 +46,112 @@ class OutputGate(NoiseGateProcessor):
         return super().process(audio, sample_rate)
 
 
+class SilenceMute(AudioProcessor):
+    """Passes the converted output only where the input had speech, one model delay earlier.
+
+    With nothing coming in, the model still hallucinates short hiss bursts (3-6 kHz, up to
+    -14 dBFS, measured on a recording with the microphone off), and no filter separates
+    those from speech. The input gate knows when speech went in, and the voice comes out
+    about 2.4 s later (measured by replaying a recording through the real chain; a 1.5 s
+    hold muted whole words before they were played). So the output at time t is let through
+    when the input was open somewhere in [t - delay - tail, t - delay + lead], and muted
+    otherwise. The delay is measured while running: each input onset is paired with the next
+    output onset, and the median of the last few pairs is used. Until the first pair exists
+    the output is muted after a plain 4 s hold. Ramps are 10 ms (close) and 5 ms (open);
+    switched off it is a pass-through.
+    """
+
+    DEFAULT_DELAY = 2.4
+    MIN_DELAY, MAX_DELAY = 0.8, 3.8
+    LEAD, TAIL = 0.5, 0.9           # seconds around the delayed input that stay open
+    START_HOLD = 4.0                # the rule used before a delay has been measured
+    ONSET_DB = -45.0
+    PAIRS = 5
+
+    def __init__(self, hold_seconds=START_HOLD):
+        self.hold_seconds = float(hold_seconds)
+        self.enabled = True
+        self.armed = False          # set per block by the chain: AI route only
+        self.input_open = True      # set per block by the chain: the input gate's state
+        self.delay_seconds = None   # measured model delay; None until the first pair
+        self.reset()
+
+    def prepare(self, sample_rate, max_frames):
+        self._rate = sample_rate
+        self.reset()
+
+    def reset(self):
+        self._frame = 0
+        self._silent_frames = 0
+        self._level = 1.0
+        self._was_open = False
+        self._intervals = []        # [start, end] input-open spans, in frames
+        self._pending_onsets = []   # input onsets (frames) not yet paired with an output onset
+        self._quiet_out_frames = 10 ** 9
+        self._pairs = []
+
+    # -- delay measurement -------------------------------------------------------------
+    def _note_input(self, start, frames, rate):
+        if self.input_open:
+            if self._intervals and start - self._intervals[-1][1] <= frames:
+                self._intervals[-1][1] = start + frames
+            else:
+                self._intervals.append([start, start + frames])
+            if not self._was_open:
+                self._pending_onsets.append(start)
+        self._was_open = self.input_open
+        horizon = start - int(8 * rate)
+        while self._intervals and self._intervals[0][1] < horizon:
+            self._intervals.pop(0)
+        self._pending_onsets = [onset for onset in self._pending_onsets if onset > horizon]
+
+    def _note_output(self, audio, start, frames, rate):
+        level = float(np.sqrt(np.mean(audio * audio))) if frames else 0.0
+        loud = level > 10.0 ** (self.ONSET_DB / 20.0)
+        if loud and self._quiet_out_frames >= int(0.4 * rate):
+            for onset in self._pending_onsets:
+                seconds = (start - onset) / rate
+                if self.MIN_DELAY <= seconds <= self.MAX_DELAY:
+                    self._pairs.append(seconds)
+                    del self._pairs[:-self.PAIRS]
+                    self.delay_seconds = float(np.median(self._pairs))
+                    self._pending_onsets = [o for o in self._pending_onsets if o > onset]
+                    break
+        self._quiet_out_frames = 0 if loud else self._quiet_out_frames + frames
+
+    def _allowed(self, start, frames, rate):
+        if self.delay_seconds is None:
+            return self._silent_frames <= self.hold_seconds * rate
+        low = start - int((self.delay_seconds + self.TAIL) * rate)
+        high = start + frames - int((self.delay_seconds - self.LEAD) * rate)
+        return any(span[1] >= low and span[0] <= high for span in self._intervals)
+
+    def process(self, audio, sample_rate):
+        frames = len(audio)
+        start = self._frame
+        self._frame += frames
+        if not (self.enabled and self.armed):
+            self._silent_frames = 0
+            self._was_open = self.input_open
+            return audio
+        self._silent_frames = 0 if self.input_open else self._silent_frames + frames
+        self._note_input(start, frames, sample_rate)
+        self._note_output(audio, start, frames, sample_rate)
+        target = 1.0 if self._allowed(start, frames, sample_rate) else 0.0
+        if self._level == target:
+            if target == 0.0:
+                audio.fill(0.0)
+            return audio
+        seconds = 0.010 if target < self._level else 0.005
+        step = frames / (seconds * sample_rate)
+        delta = target - self._level
+        end = self._level + (min(abs(delta), step) if delta > 0 else -min(abs(delta), step))
+        ramp = np.linspace(self._level, end, frames, dtype=np.float32).reshape(-1, 1)
+        np.multiply(audio, ramp, out=audio)
+        self._level = float(end)
+        return audio
+
+
 class ProcessorChain(AudioProcessor):
     def __init__(self, main_processor=None, gain_db=0.0, threshold_db=-45.0, denoise_strength=0.0,
                  whisper=None, finish=None):
@@ -88,9 +194,10 @@ class ProcessorChain(AudioProcessor):
         # The matching low-pass trims hiss and sibilant bursts; the cutoff is a slider.
         self.out_high_cut = OutputHighCutProcessor()
         self.out_high_cut_on = False
+        self.silence_mute = SilenceMute()
         self.out_gate = OutputGate()
         self.out_gate_on = True
-        self.post_processors = (self.out_low_cut, self.out_high_cut, self.out_gate, self.ai_formant, self.finish, SafetyClampProcessor())
+        self.post_processors = (self.silence_mute, self.out_low_cut, self.out_high_cut, self.out_gate, self.ai_formant, self.finish, SafetyClampProcessor())
         self._stages = (*self.pre_processors, self.main_processor, *self.post_processors)
         self.performance = TimingStats()
 
@@ -114,6 +221,7 @@ class ProcessorChain(AudioProcessor):
         self.gate.protect_quiet = (getattr(router, 'mode', None) == 'ai_voice'
                                    and ai is not None and is_meanvc2(ai.bridge.parameters.model))
         self.out_gate.enabled = self.out_gate_on and getattr(router, 'mode', None) == 'ai_voice'
+        self.silence_mute.armed = getattr(router, 'mode', None) == 'ai_voice'
         self.out_low_cut.set_enabled(self.out_low_cut_on and getattr(router, 'mode', None) == 'ai_voice')
         self.out_high_cut.set_enabled(self.out_high_cut_on and getattr(router, 'mode', None) == 'ai_voice')
         # The finish only ever conditions converted output. The flag rides along
@@ -130,6 +238,9 @@ class ProcessorChain(AudioProcessor):
                 mode='original', pitch=0.0, formant=0.0,
                 brightness=50.0, low_cut=False, limiter=False, wet=1.0, quality='low_latency'))
         for processor in self._stages:
+            if processor is self.silence_mute:
+                # The gate has seen this block by now: it is open while the input has speech.
+                processor.input_open = self.gate._opened
             started = time.perf_counter_ns() if processor is self.main_processor else 0
             audio = processor.process(audio, sample_rate)
             if started:
