@@ -94,3 +94,6 @@ models/tts/
 
 # macOS build output (tools/build_native_mac.sh)
 src/processors/native/*.dylib
+
+# personal launcher built by tools/make_app_mac.sh (holds machine-specific links)
+/Koeiro.app/
