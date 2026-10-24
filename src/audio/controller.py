@@ -170,6 +170,10 @@ class AudioController:
         """Live, in-place: 0 is a pass-through, so switching needs no stream restart."""
         self.engine.chain.denoise.set_strength(strength)
 
+    def set_onset_fade(self, enabled):
+        """Live: the fade only acts where converted output starts after silence."""
+        self.engine.chain.onset_fade.enabled = bool(enabled)
+
     def set_silence_mute(self, enabled):
         """Live: the mute only acts on the AI route, after the input has been silent a while."""
         self.engine.chain.silence_mute.enabled = bool(enabled)

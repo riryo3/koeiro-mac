@@ -152,6 +152,60 @@ class SilenceMute(AudioProcessor):
         return audio
 
 
+class OnsetFade(AudioProcessor):
+    """A short fade-in where converted output starts after silence.
+
+    Recordings show each phrase leaving digital silence and reaching -30..-15 dBFS within
+    10 ms, with small clicks (-40..-52 dBFS) at some onsets. Fading in over 20 ms from the
+    first audible sample rounds those off; sound that continues is never touched. Armed by
+    the chain on the AI route only; off is a pass-through.
+    """
+
+    FLOOR = 1e-4             # below this (-80 dBFS) the output counts as silent
+    QUIET_SECONDS = 0.08     # silence needed before an onset is faded
+
+    def __init__(self, fade_seconds=0.020):
+        self.fade_seconds = float(fade_seconds)
+        self.enabled = True
+        self.armed = False
+        self.reset()
+
+    def prepare(self, sample_rate, max_frames):
+        self._rate = sample_rate
+        self.reset()
+
+    def reset(self):
+        self._quiet = 10 ** 9
+        self._done = 10 ** 9      # samples already faded in the current onset (>= length: idle)
+
+    def process(self, audio, sample_rate):
+        frames = len(audio)
+        length = max(1, int(self.fade_seconds * sample_rate))
+        samples = audio[:, 0]
+        if not (self.enabled and self.armed):
+            self._quiet, self._done = 10 ** 9, length
+            return audio
+        if self._done >= length:
+            loud = np.flatnonzero(np.abs(samples) > self.FLOOR)
+            if len(loud) == 0:
+                self._quiet += frames
+                return audio
+            if self._quiet >= self.QUIET_SECONDS * sample_rate:
+                self._done = 0
+                start = int(loud[0])
+                self._quiet = 0
+            else:
+                self._quiet = 0
+                return audio
+        else:
+            start = 0
+        count = min(length - self._done, frames - start)
+        ramp = (np.arange(self._done, self._done + count, dtype=np.float32) + 1.0) / length
+        np.multiply(samples[start:start + count], 0.5 - 0.5 * np.cos(np.pi * ramp), out=samples[start:start + count])
+        self._done += count
+        return audio
+
+
 class ProcessorChain(AudioProcessor):
     def __init__(self, main_processor=None, gain_db=0.0, threshold_db=-45.0, denoise_strength=0.0,
                  whisper=None, finish=None):
@@ -195,9 +249,10 @@ class ProcessorChain(AudioProcessor):
         self.out_high_cut = OutputHighCutProcessor()
         self.out_high_cut_on = False
         self.silence_mute = SilenceMute()
+        self.onset_fade = OnsetFade()
         self.out_gate = OutputGate()
         self.out_gate_on = True
-        self.post_processors = (self.silence_mute, self.out_low_cut, self.out_high_cut, self.out_gate, self.ai_formant, self.finish, SafetyClampProcessor())
+        self.post_processors = (self.silence_mute, self.out_low_cut, self.out_high_cut, self.out_gate, self.onset_fade, self.ai_formant, self.finish, SafetyClampProcessor())
         self._stages = (*self.pre_processors, self.main_processor, *self.post_processors)
         self.performance = TimingStats()
 
@@ -222,6 +277,7 @@ class ProcessorChain(AudioProcessor):
                                    and ai is not None and is_meanvc2(ai.bridge.parameters.model))
         self.out_gate.enabled = self.out_gate_on and getattr(router, 'mode', None) == 'ai_voice'
         self.silence_mute.armed = getattr(router, 'mode', None) == 'ai_voice'
+        self.onset_fade.armed = getattr(router, 'mode', None) == 'ai_voice'
         self.out_low_cut.set_enabled(self.out_low_cut_on and getattr(router, 'mode', None) == 'ai_voice')
         self.out_high_cut.set_enabled(self.out_high_cut_on and getattr(router, 'mode', None) == 'ai_voice')
         # The finish only ever conditions converted output. The flag rides along

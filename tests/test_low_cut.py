@@ -135,3 +135,29 @@ def test_silence_mute_learns_the_delay_and_blocks_bursts_between_words():
     assert lost_voice <= 2 * rate * 0.02 / block + 6
     assert kept_voice > 0.95 * (kept_voice + lost_voice)
     assert leaked == 0
+
+
+def test_onset_fade_rounds_the_start_and_leaves_running_sound_alone():
+    from src.processors.chain import OnsetFade
+    rate, block = 48000, 256
+    fade = OnsetFade()
+    fade.prepare(rate, block)
+    fade.armed = True
+    out = []
+    for i in range(80):
+        audio = np.zeros((block, 1), dtype=np.float32)
+        if i >= 30:                                     # loud from block 30, mid-block start
+            audio[100:, 0] = 0.3 if i == 30 else 0.0
+            if i > 30:
+                audio[:, 0] = 0.3
+        out.append(fade.process(audio.copy(), rate)[:, 0])
+    x = np.concatenate(out)
+    onset = 30 * block + 100
+    assert np.abs(x[:onset]).max() == 0.0
+    assert x[onset] < 0.01                              # starts from (almost) zero
+    assert abs(x[onset + 960 + 5] - 0.3) < 1e-6         # full level after 20 ms
+    assert np.abs(np.diff(x[onset:onset + 960])).max() < 0.002   # no step
+    assert np.allclose(x[onset + 3000:], 0.3)           # continuing sound is untouched
+    # A second onset right after only a short pause is not faded (not a fresh start).
+    fade.armed = False
+    assert abs(float(np.abs(fade.process(np.full((block, 1), 0.3, dtype=np.float32), rate)).max()) - 0.3) < 1e-6

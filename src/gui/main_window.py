@@ -2793,6 +2793,13 @@ class MainWindow(QMainWindow):
         self.finish_toggle.toggled.connect(self._finish_changed)
         column.addWidget(self.finish_toggle)
         self._finish_changed()
+        self.onset_fade_toggle = QCheckBox('声の出始めをなめらかに（20ms）')
+        self.onset_fade_toggle.setChecked(self.settings.output_onset_fade)
+        self.onset_fade_toggle.setToolTip('無音から声が出始める瞬間に、20msのフェードインを入れて、クリック音を丸めます。\n'
+                                          '語頭が少し柔らかくなります。変換後のみ。停止中でも変換中でも切替できます。')
+        self.onset_fade_toggle.toggled.connect(self._onset_fade_changed)
+        column.addWidget(self.onset_fade_toggle)
+        self._onset_fade_changed()
         self.silence_mute_toggle = QCheckBox('無音のときは出力も止める')
         self.silence_mute_toggle.setChecked(self.settings.output_silence_mute)
         self.silence_mute_toggle.setToolTip('入力に声がなかった時間の出力を止めます（AIの声は約2秒遅れて出るので、その分ずらして判定）。\n'
@@ -2818,6 +2825,12 @@ class MainWindow(QMainWindow):
             column, '高域カットの周波数（これより上を切る）', 20, 120, round(self.settings.output_high_cut_hz / 100))
         self.out_high_cut_hz.valueChanged.connect(self._out_high_cut_changed)
         self._out_high_cut_changed()
+
+    def _onset_fade_changed(self, *_):
+        """Live: the fade acts per block on the AI route, so the stream never needs a restart."""
+        if not hasattr(self, 'onset_fade_toggle') or self._closing:
+            return
+        self.controller.set_onset_fade(self.onset_fade_toggle.isChecked())
 
     def _silence_mute_changed(self, *_):
         """Live: armed per block on the AI route, so the stream never needs a restart."""
@@ -4575,6 +4588,7 @@ class MainWindow(QMainWindow):
         self.env_passthrough_toggle.setChecked(settings.env_passthrough)
         self.finish_toggle.setChecked(settings.finish)
         self._out_low_cut_hz = float(settings.output_low_cut_hz)
+        self.onset_fade_toggle.setChecked(settings.output_onset_fade)
         self.silence_mute_toggle.setChecked(settings.output_silence_mute)
         self.out_low_cut_toggle.setChecked(settings.output_low_cut)
         self._out_low_cut_changed()
@@ -5184,6 +5198,8 @@ class MainWindow(QMainWindow):
             env_passthrough=(self.env_passthrough_toggle.isChecked() if hasattr(self, 'env_passthrough_toggle')
                              else self.settings.env_passthrough),
             finish=self.finish_toggle.isChecked() if hasattr(self, 'finish_toggle') else self.settings.finish,
+            output_onset_fade=(self.onset_fade_toggle.isChecked() if hasattr(self, 'onset_fade_toggle')
+                               else self.settings.output_onset_fade),
             output_silence_mute=(self.silence_mute_toggle.isChecked() if hasattr(self, 'silence_mute_toggle')
                                  else self.settings.output_silence_mute),
             output_low_cut=(self.out_low_cut_toggle.isChecked() if hasattr(self, 'out_low_cut_toggle')
