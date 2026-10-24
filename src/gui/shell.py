@@ -426,6 +426,190 @@ class MeterStrip(QWidget):
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, str(tick))
 
 
+class BandMeter(QWidget):
+    """Output spectrum on a log frequency axis (low at the bottom), with two cut handles.
+
+    Each bar is one band, drawn from the left; its length is the band level. The lower
+    handle is the low cut and the upper one the high cut: what lies beyond a handle is
+    greyed. A handle that is off rests at its end of the axis, dim, and is dragged out
+    from there; dragging it back to the end switches it off again.
+    """
+
+    from src.audio.spectrum import BANDS, FREQ_MAX, FREQ_MIN
+    DB_LOW, DB_HIGH = -72.0, -12.0
+    GRAB = 10
+    OFF_LOW, OFF_HIGH = 50.0, 11000.0
+    TICKS = ((100, '100'), (1000, '1k'), (10000, '10k'))
+    lowCutDragged = Signal(float)
+    highCutDragged = Signal(float)
+    cutReset = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._levels = [0.0] * self.BANDS
+        self._target = [0.0] * self.BANDS
+        self._low_hz = None    # None = off
+        self._high_hz = None
+        self._drag = None
+        self._hint_shown = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(40)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+        self.setMouseTracking(True)
+        self.setMinimumHeight(160)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+
+    # -- data in -----------------------------------------------------------------------
+    def set_levels(self, decibels):
+        span = self.DB_HIGH - self.DB_LOW
+        self._target = [max(0.0, min(1.0, (value - self.DB_LOW) / span)) for value in decibels]
+
+    def clear(self):
+        self._target = [0.0] * self.BANDS
+
+    def set_cuts(self, low_hz, high_hz):
+        """Handle positions in Hz; None puts that handle at rest (off). Never emits."""
+        self._low_hz = None if low_hz is None else float(low_hz)
+        self._high_hz = None if high_hz is None else float(high_hz)
+        self.update()
+
+    def _tick(self):
+        for index in range(self.BANDS):
+            self._levels[index] = max(self._target[index], self._levels[index] - 0.04)
+        self.update()
+
+    # -- geometry ----------------------------------------------------------------------
+    def _area(self):
+        top, bottom = 8, 8
+        return top, max(10, self.height() - top - bottom)
+
+    def _y(self, hertz):
+        import math
+        top, height = self._area()
+        fraction = math.log(max(self.FREQ_MIN, min(self.FREQ_MAX, hertz)) / self.FREQ_MIN) / math.log(
+            self.FREQ_MAX / self.FREQ_MIN)
+        return int(top + height * (1.0 - fraction))
+
+    def _hz_at(self, y):
+        top, height = self._area()
+        fraction = max(0.0, min(1.0, 1.0 - (y - top) / height))
+        return self.FREQ_MIN * (self.FREQ_MAX / self.FREQ_MIN) ** fraction
+
+    BAR_X, BAR_W = 4, 34
+
+    def _handle_hz(self, index):
+        if index == 0:
+            return self._low_hz if self._low_hz is not None else self.FREQ_MIN
+        return self._high_hz if self._high_hz is not None else self.FREQ_MAX
+
+    def _handle_at(self, pos):
+        if not (self.BAR_X - 4 <= pos.x() <= self.BAR_X + self.BAR_W + 4):
+            return None
+        best, distance = None, self.GRAB + 4
+        for index in (1, 0):
+            gap = abs(pos.y() - self._y(self._handle_hz(index)))
+            if gap <= distance:
+                best, distance = index, gap
+        return best
+
+    # -- mouse -------------------------------------------------------------------------
+    def mousePressEvent(self, event):
+        index = self._handle_at(event.position().toPoint())
+        if index is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._drag = index
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        from PySide6.QtWidgets import QToolTip
+        if self._drag is not None:
+            hertz = self._hz_at(event.position().y())
+            if self._drag == 0:
+                self.lowCutDragged.emit(hertz)
+                shown = self._low_hz
+                text = 'ローカット ' + ('オフ' if shown is None else f'{shown:.0f} Hz')
+            else:
+                self.highCutDragged.emit(hertz)
+                shown = self._high_hz
+                text = '高域カット ' + ('オフ' if shown is None else f'{shown / 1000:.1f} kHz')
+            QToolTip.showText(event.globalPosition().toPoint(), text, self)
+            event.accept()
+            return
+        hovered = self._handle_at(event.position().toPoint())
+        self.setCursor(Qt.CursorShape.SizeVerCursor if hovered is not None else Qt.CursorShape.ArrowCursor)
+        if hovered is not None and hovered != self._hint_shown:
+            QToolTip.showText(event.globalPosition().toPoint(), (
+                'ローカット: これより低い音を切ります。上へドラッグで強く、下端でオフ。\n'
+                '「ドーン」などの低い音に。ダブルクリックでオフ。' if hovered == 0 else
+                '高域カット: これより高い音を切ります。下へドラッグで強く、上端でオフ。\n'
+                '「シャッ」などの高い音に。下げるほど声がこもります。ダブルクリックでオフ。'), self)
+        self._hint_shown = hovered
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag is not None:
+            self._drag = None
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        index = self._handle_at(event.position().toPoint())
+        if index is not None:
+            self.cutReset.emit(index)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    # -- paint -------------------------------------------------------------------------
+    def paintEvent(self, event: QPaintEvent):
+        from src.audio.spectrum import band_edges
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        top, height = self._area()
+        x, width = self.BAR_X, self.BAR_W
+        painter.fillRect(x, top, width, height, QColor(TRACK))
+        edges = band_edges(self.BANDS, self.FREQ_MIN, self.FREQ_MAX)
+        green, yellow = QColor('#2f9e6f'), QColor('#d9a21b')
+        for index in range(self.BANDS):
+            level = self._levels[index]
+            if level <= 0.0:
+                continue
+            y_top, y_bottom = self._y(edges[index + 1]), self._y(edges[index])
+            painter.fillRect(x, y_top, max(1, int(width * level)), max(1, y_bottom - y_top - 1),
+                             yellow if level > 0.85 else green)
+        shade = QColor(120, 128, 140, 150)
+        if self._low_hz is not None:
+            low_y = self._y(self._low_hz)
+            painter.fillRect(x, low_y, width, top + height - low_y, shade)
+        if self._high_hz is not None:
+            high_y = self._y(self._high_hz)
+            painter.fillRect(x, top, width, high_y - top, shade)
+        small = painter.font()
+        small.setPointSize(7)
+        painter.setFont(small)
+        painter.setPen(QColor(TEXT_MUTED))
+        label_x = x + width + 4
+        for hertz, text in self.TICKS:
+            y = self._y(hertz)
+            painter.drawLine(x + width, y, x + width + 3, y)
+            painter.drawText(QRect(label_x, y - 7, self.width() - label_x, 14),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+        for index, hertz in ((0, self._low_hz), (1, self._high_hz)):
+            at_rest = hertz is None
+            y = self._y(self._handle_hz(index))
+            if not at_rest:
+                painter.fillRect(x, y - 1, width, 2, QColor(TEXT_MUTED))
+            draw_cap(painter, QRect(x - 3, y - 10, width + 6, 21), self._drag == index, at_rest)
+            if not at_rest:
+                text = f'{hertz:.0f}' if hertz < 1000 else f'{hertz / 1000:.1f}k'
+                painter.setPen(QColor(TEXT))
+                painter.drawText(QRect(label_x, y - 7 + (9 if index == 0 else -9), self.width() - label_x, 14),
+                                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+
+
 STATUS_BADGES = {
     'stopped': ('停止中', 'stopped'),
     'running': ('変換中', 'running'),

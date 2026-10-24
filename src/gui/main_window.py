@@ -289,6 +289,14 @@ class MainWindow(QMainWindow):
         # sides (the left side holds the input gate number, drawn partly outside the button).
         self.input_bar.setFixedWidth(150)
         meter_row.addWidget(self.input_bar)
+        # 帯域: the output spectrum with the low cut / high cut handles, between the level bars and Gain.
+        from .shell import BandMeter
+        self.band_meter = BandMeter()
+        self.band_meter.setFixedWidth(self.BAND_WIDTH)
+        self.band_meter.lowCutDragged.connect(self._band_low_dragged)
+        self.band_meter.highCutDragged.connect(self._band_high_dragged)
+        self.band_meter.cutReset.connect(self._band_cut_reset)
+        meter_row.addWidget(self.band_meter)
         from .shell import Fader
         fader_column = QVBoxLayout()
         fader_column.setContentsMargins(0, 9, 0, 9)   # no side margin: the column is only 6 px wider than the cap
@@ -322,6 +330,11 @@ class MainWindow(QMainWindow):
             if index == 0:
                 readouts.addItem(self._readout_spacers[1])   # the shared scale column lies between the two bars
         readouts.addItem(self._readout_spacers[2])   # puts the Gain label 2 px left of the fader's centre line
+        self.band_label = QLabel('帯域\n全域')
+        self.band_label.setObjectName('muted')
+        self.band_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.band_label.setFixedWidth(self.BAND_WIDTH)
+        readouts.addWidget(self.band_label)
         self.gain_fader_label.setObjectName('muted')
         self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.gain_fader_label.setFixedWidth(44)
@@ -601,6 +614,14 @@ class MainWindow(QMainWindow):
         self._gate_changed(self.gate.value())
         # Optional spectral noise reduction, applied live like the gate. It is off by
         # default because it reshapes the voice; the strength is a user choice.
+        self.low_cut_toggle = QCheckBox('ローカット（低い音を切る・100Hz以下）')
+        self.low_cut_toggle.setChecked(self.settings.input_low_cut)
+        self.low_cut_toggle.setToolTip('机の振動・息・「ぱ」「ぶ」などの低い音を、AIに渡す前に切ります。\n'
+                                       '変換後に「ドーン」と低い音が出るときに使います。声（150Hz以上）はほぼ変わりません。\n'
+                                       '停止中でも切替できます。')
+        self.low_cut_toggle.toggled.connect(self._low_cut_changed)
+        level_section.addWidget(self.low_cut_toggle)
+        self._low_cut_changed()
         self.denoise_toggle = QCheckBox('ノイズ除去（実験的）')
         self.denoise_toggle.setChecked(self.settings.denoise)
         self.denoise_toggle.setToolTip('ファン・サー音などの定常ノイズを抑えます（実験的）。\n'
@@ -1323,6 +1344,8 @@ class MainWindow(QMainWindow):
                 return True
         return super().eventFilter(watched, event)
 
+    BAND_WIDTH = 68
+
     def _fit_meter_width(self, force=False):
         """Size the level meters and the Gain fader to the window.
 
@@ -1338,7 +1361,10 @@ class MainWindow(QMainWindow):
         xs0 = 12 + margin
         out_right = xs0 + 2*bar + scale_gap
         self.input_bar.set_bar_width(bar)
-        self.meter_strip.setFixedWidth(xs0 + 2*bar + scale_gap + out_zone + 32 + margin + 8)
+        band = 0 if self._compact else self.BAND_WIDTH
+        self.band_meter.setVisible(not self._compact)
+        self.band_label.setVisible(not self._compact)
+        self.meter_strip.setFixedWidth(xs0 + 2*bar + scale_gap + out_zone + 32 + margin + 8 + band)
         self.input_bar.setFixedWidth(out_right + out_zone - 6)
         first, second, third = self._readout_spacers
         xs1 = xs0 + bar + scale_gap
@@ -2767,6 +2793,84 @@ class MainWindow(QMainWindow):
         self.finish_toggle.toggled.connect(self._finish_changed)
         column.addWidget(self.finish_toggle)
         self._finish_changed()
+        self._out_low_cut_hz = float(self.settings.output_low_cut_hz)
+        self.out_low_cut_toggle = QCheckBox('出力のローカット（低い音を切る）')
+        self.out_low_cut_toggle.setChecked(self.settings.output_low_cut)
+        self.out_low_cut_toggle.setToolTip('AIが作った低い音（「ドーン」など）を、出力の前に切ります。\n'
+                                           '変換後のみ。既定はOFF。停止中でも変換中でも切替できます。')
+        self.out_low_cut_toggle.toggled.connect(self._out_low_cut_changed)
+        column.addWidget(self.out_low_cut_toggle)
+        self._out_low_cut_changed()
+        self.out_high_cut_toggle = QCheckBox('出力の高域カット（高い音を切る）')
+        self.out_high_cut_toggle.setChecked(self.settings.output_high_cut)
+        self.out_high_cut_toggle.setToolTip('AIが作った高い音（「シャッ」という息の音など）を、スライダーの周波数より上で切ります。\n'
+                                            '下げるほど強く切れますが、声がこもります。変換後のみ。既定はOFF。')
+        self.out_high_cut_toggle.toggled.connect(self._out_high_cut_changed)
+        column.addWidget(self.out_high_cut_toggle)
+        self.out_high_cut_hz, self.out_high_cut_label = self._slider(
+            column, '高域カットの周波数（これより上を切る）', 20, 120, round(self.settings.output_high_cut_hz / 100))
+        self.out_high_cut_hz.valueChanged.connect(self._out_high_cut_changed)
+        self._out_high_cut_changed()
+
+    def _out_high_cut_changed(self, *_):
+        """Live: the cutoff follows the slider while the filter keeps its state."""
+        if not hasattr(self, 'out_high_cut_hz'):
+            return
+        hertz = self.out_high_cut_hz.value() * 100
+        self.out_high_cut_label.setText(f'{hertz / 1000:.1f} kHz')
+        enabled = self.out_high_cut_toggle.isChecked()
+        self.out_high_cut_hz.setEnabled(enabled)
+        self.out_high_cut_label.setEnabled(enabled)
+        self._sync_band_meter()
+        if not self._closing:
+            self.controller.set_output_high_cut(enabled, hertz)
+
+    def _sync_band_meter(self):
+        """Handles and the 帯域 caption follow the two switches and their frequencies."""
+        if not hasattr(self, 'band_meter') or not hasattr(self, 'out_low_cut_toggle') \
+                or not hasattr(self, 'out_high_cut_toggle') or not hasattr(self, 'out_high_cut_hz'):
+            return
+        low = self._out_low_cut_hz if self.out_low_cut_toggle.isChecked() else None
+        high = self.out_high_cut_hz.value() * 100.0 if self.out_high_cut_toggle.isChecked() else None
+        self.band_meter.set_cuts(low, high)
+        def short(hertz):
+            return f'{hertz:.0f}' if hertz < 1000 else f'{hertz / 1000:.1f}k'
+        if low is None and high is None:
+            text = '全域'
+        else:
+            text = f"{short(low) if low is not None else '低'}–{short(high) if high is not None else '高'}"
+        self.band_label.setText(f'帯域\n{text}')
+
+    def _band_low_dragged(self, hertz):
+        """Drag on the 帯域 meter: low cut. At the bottom end it is off; elsewhere on."""
+        if hertz <= self.band_meter.OFF_LOW:
+            self.out_low_cut_toggle.setChecked(False)
+            return
+        self._out_low_cut_hz = max(60.0, min(400.0, round(hertz / 5) * 5.0))
+        was_on = self.out_low_cut_toggle.isChecked()
+        self.out_low_cut_toggle.setChecked(True)
+        if was_on:
+            self._out_low_cut_changed()
+
+    def _band_high_dragged(self, hertz):
+        """Drag on the 帯域 meter: high cut. At the top end it is off; elsewhere on."""
+        if hertz >= self.band_meter.OFF_HIGH:
+            self.out_high_cut_toggle.setChecked(False)
+            return
+        self.out_high_cut_toggle.setChecked(True)
+        self.out_high_cut_hz.setValue(max(20, min(110, round(hertz / 100))))
+
+    def _band_cut_reset(self, index):
+        (self.out_low_cut_toggle if index == 0 else self.out_high_cut_toggle).setChecked(False)
+
+    def _out_low_cut_changed(self, *_):
+        """Live: armed per block on the AI route, so the stream never needs a restart."""
+        if not hasattr(self, 'out_low_cut_toggle'):
+            return
+        self.out_low_cut_toggle.setText(f'出力のローカット（{self._out_low_cut_hz:.0f}Hz以下を切る）')
+        self._sync_band_meter()
+        if not self._closing:
+            self.controller.set_output_low_cut(self.out_low_cut_toggle.isChecked(), self._out_low_cut_hz)
 
     def _finish_changed(self, *_):
         """Live: the stage eases its gain back, so the stream never needs a restart."""
@@ -4224,6 +4328,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'input_bar'):
             self.input_bar.set_output_gate_db(db)
 
+    def _low_cut_changed(self, *_):
+        """Live: the filter resets while off, so the stream never needs a restart."""
+        if not hasattr(self, 'low_cut_toggle') or self._closing:
+            return
+        self.controller.set_input_low_cut(self.low_cut_toggle.isChecked())
+
     def _denoise_changed(self, *_):
         """Live: 0 is a pass-through, so the stream never needs a restart."""
         if not hasattr(self, 'denoise_toggle'):
@@ -4445,11 +4555,17 @@ class MainWindow(QMainWindow):
         self.gain.setValue(round(settings.gain_db * 10))
         self.gate.setValue(round(settings.noise_gate_db * 10))
         self.out_gate.setValue(round(settings.output_gate_db * 10))
+        self.low_cut_toggle.setChecked(settings.input_low_cut)
         self.denoise_toggle.setChecked(settings.denoise)
         self.denoise_strength.setValue(round(settings.denoise_strength * 100))
         self.auto_level_toggle.setChecked(settings.auto_level)
         self.env_passthrough_toggle.setChecked(settings.env_passthrough)
         self.finish_toggle.setChecked(settings.finish)
+        self._out_low_cut_hz = float(settings.output_low_cut_hz)
+        self.out_low_cut_toggle.setChecked(settings.output_low_cut)
+        self._out_low_cut_changed()
+        self.out_high_cut_toggle.setChecked(settings.output_high_cut)
+        self.out_high_cut_hz.setValue(round(settings.output_high_cut_hz / 100))
         self.ai_formant_toggle.setChecked(settings.ai_formant_on)
         self.ai_formant_amount.setValue(round(settings.ai_formant * 10))
         voice_index = self.ai_model.findData(settings.ai_model)
@@ -4705,6 +4821,12 @@ class MainWindow(QMainWindow):
         self.output_db.setText(f"出力\n{amplitude_to_db(self._display_output):.1f}")
         self.input_bar.set_level(self._display_input)
         self.input_bar.set_output_level(self._display_output)
+        engine = self.controller.engine
+        if snapshot.state == "Running" and self.band_meter.isVisible() and engine.config is not None:
+            from src.audio.spectrum import band_levels
+            self.band_meter.set_levels(band_levels(engine.take_output_tail(2048), engine.config.sample_rate))
+        else:
+            self.band_meter.clear()
         self._update_stage(snapshot)
         self._update_ai_readiness()
         self.xruns.setText(f"Underflow: {snapshot.underflows} · Overflow: {snapshot.overflows}"
@@ -5039,6 +5161,8 @@ class MainWindow(QMainWindow):
             sample_rate=self.rate.currentData(), buffer_size=self.buffer.currentData(),
             gain_db=self.gain.value() / 10, noise_gate_db=self.gate.value() / 10,
             output_gate_db=self.out_gate.value() / 10,
+            input_low_cut=(self.low_cut_toggle.isChecked() if hasattr(self, 'low_cut_toggle')
+                           else self.settings.input_low_cut),
             denoise=self.denoise_toggle.isChecked() if hasattr(self, 'denoise_toggle') else self.settings.denoise,
             denoise_strength=(self.denoise_strength.value() / 100 if hasattr(self, 'denoise_strength')
                               else self.settings.denoise_strength),
@@ -5046,6 +5170,14 @@ class MainWindow(QMainWindow):
             env_passthrough=(self.env_passthrough_toggle.isChecked() if hasattr(self, 'env_passthrough_toggle')
                              else self.settings.env_passthrough),
             finish=self.finish_toggle.isChecked() if hasattr(self, 'finish_toggle') else self.settings.finish,
+            output_low_cut=(self.out_low_cut_toggle.isChecked() if hasattr(self, 'out_low_cut_toggle')
+                            else self.settings.output_low_cut),
+            output_low_cut_hz=(self._out_low_cut_hz if hasattr(self, '_out_low_cut_hz')
+                               else self.settings.output_low_cut_hz),
+            output_high_cut=(self.out_high_cut_toggle.isChecked() if hasattr(self, 'out_high_cut_toggle')
+                             else self.settings.output_high_cut),
+            output_high_cut_hz=(self.out_high_cut_hz.value() * 100.0 if hasattr(self, 'out_high_cut_hz')
+                                else self.settings.output_high_cut_hz),
             ai_formant_on=self.ai_formant_toggle.isChecked() if hasattr(self, 'ai_formant_toggle') else self.settings.ai_formant_on,
             ai_formant=(self.ai_formant_amount.value() / 10 if hasattr(self, 'ai_formant_amount')
                         else self.settings.ai_formant),

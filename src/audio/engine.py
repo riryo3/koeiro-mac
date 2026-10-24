@@ -61,6 +61,9 @@ class AudioEngine:
         self._mute_gain = 1.0
         self._stream = None
         self.config = None
+        # The last 4096 output samples, copied per block for the band meter (observation only).
+        self._tap_ring = np.zeros(self.TAP_SIZE, dtype=np.float32)
+        self._tap_pos = 0
         self.input_peak = self.output_peak = 0.0
         self.underflows = self.overflows = 0
         self._reported_counts = (0, 0)
@@ -271,6 +274,7 @@ class AudioEngine:
                 np.multiply(audio, ramp.reshape(-1, 1), out=audio)
                 self._mute_gain = target
             self.output_peak = peak_level(audio)
+            self._offer_tap(audio)
             if self.monitor_player is not None and self.monitor_player.running:
                 self.monitor_tap.offer(audio[:, 0])
             # Broadcast mono to both channels for stereo-only render endpoints.
@@ -339,6 +343,25 @@ class AudioEngine:
         log.info("Stream stop: Underflow=%d Overflow=%d", self.underflows, self.overflows)
         log.info("Callback timing: %s; Main timing: %s; diagnostics: %s",
                  self.performance.snapshot(), self.chain.performance.snapshot(), self.diagnostics.snapshot())
+
+    TAP_SIZE = 4096
+
+    def _offer_tap(self, audio):
+        """Copy the block into the ring: two slices, no allocation, no locking."""
+        size = self.TAP_SIZE
+        block = audio[:size, 0]
+        position = self._tap_pos
+        first = min(len(block), size - position)
+        self._tap_ring[position:position + first] = block[:first]
+        if first < len(block):
+            self._tap_ring[:len(block) - first] = block[first:]
+        self._tap_pos = (position + len(block)) % size
+
+    def take_output_tail(self, count=2048):
+        """The most recent output samples in time order (a copy; GUI side, observation only)."""
+        ring = self._tap_ring.copy()
+        position = self._tap_pos
+        return np.concatenate((ring[position:], ring[:position]))[-count:]
 
     def take_peaks(self):
         # Observational snapshot only; audio samples never travel to the GUI.

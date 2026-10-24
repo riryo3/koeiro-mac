@@ -58,6 +58,12 @@ class AppSettings:
     # Favourite voices (ids, in the order they were starred); the first ten get keys 1-9, 0.
     favorite_voices: tuple = ()
     # Off by default: the spectral stage is a user choice, not the shipped route.
+    # Off by default: it removes the low band (below ~100 Hz) from the microphone signal.
+    input_low_cut: bool = False
+    output_low_cut: bool = False
+    output_low_cut_hz: float = 100.0
+    output_high_cut: bool = False
+    output_high_cut_hz: float = 6000.0
     denoise: bool = False
     denoise_strength: float = 0.6
     # Off by default: output conditioning is a user choice, not the shipped route.
@@ -176,6 +182,14 @@ class AppSettings:
         theme = data.get("theme_color")
         values["theme_color"] = (theme if isinstance(theme, str) and len(theme) == 7 and theme[0] == '#'
                                  and all(c in '0123456789abcdefABCDEF' for c in theme[1:]) else '#284b7d')
+        input_low_cut = data.get("input_low_cut")
+        values["input_low_cut"] = input_low_cut if type(input_low_cut) is bool else False
+        output_low_cut = data.get("output_low_cut")
+        values["output_low_cut"] = output_low_cut if type(output_low_cut) is bool else False
+        values["output_low_cut_hz"] = _number(data.get("output_low_cut_hz"), 100.0, 50.0, 400.0)
+        output_high_cut = data.get("output_high_cut")
+        values["output_high_cut"] = output_high_cut if type(output_high_cut) is bool else False
+        values["output_high_cut_hz"] = _number(data.get("output_high_cut_hz"), 6000.0, 2000.0, 12000.0)
         denoise = data.get("denoise")
         values["denoise"] = denoise if type(denoise) is bool else False
         values["denoise_strength"] = _number(data.get("denoise_strength"), 0.6, 0, 1)

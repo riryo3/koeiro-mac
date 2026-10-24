@@ -10,6 +10,7 @@ from .dsp_parameters import DSPParameters
 from .female_dsp import FemaleDSPProcessor
 from .gain import GainProcessor
 from .leveler import AutoLevelProcessor
+from .low_cut import InputLowCutProcessor, OutputHighCutProcessor
 from .noise_gate import NoiseGateProcessor
 from .passthrough import PassthroughProcessor
 
@@ -50,6 +51,8 @@ class ProcessorChain(AudioProcessor):
                  whisper=None, finish=None):
         # Denoise first, then the gate, then gain: the gate sees a cleaner signal
         # and the strength-0 default makes the stage a true pass-through.
+        # The input low-cut leads the chain so nothing downstream sees desk thumps or plosives.
+        self.low_cut = InputLowCutProcessor()
         self.leveler = AutoLevelProcessor()
         self.denoise = NoiseSuppressionProcessor(denoise_strength)
         self.gate = NoiseGateProcessor(threshold_db)
@@ -61,9 +64,9 @@ class ProcessorChain(AudioProcessor):
         # Levelling rides behind whisper (so its excitation is levelled too) and
         # ahead of denoise: the gate threshold and the model both behave when the
         # input sits at one level. Disabled is a true pass-through.
-        self.pre_processors = ((self.whisper, self.leveler, self.denoise, self.gate, self.gain)
+        self.pre_processors = ((self.low_cut, self.whisper, self.leveler, self.denoise, self.gate, self.gain)
                                if whisper is not None
-                               else (self.leveler, self.denoise, self.gate, self.gain))
+                               else (self.low_cut, self.leveler, self.denoise, self.gate, self.gain))
         self.main_processor = main_processor if main_processor is not None else PassthroughProcessor()
         # The AI formant finish lifts converted output toward a brighter vocal
         # tract without moving its pitch. Off by default; the native stage is
@@ -78,9 +81,16 @@ class ProcessorChain(AudioProcessor):
         # passes through it, and a chain without it is the previous behaviour.
         from .natural_finish import NaturalFinishProcessor
         self.finish = finish if finish is not None else NaturalFinishProcessor()
+        # Converted output only: the model can answer desk thumps and plosives with a loud
+        # low thud, so the same high-pass also runs after it.
+        self.out_low_cut = InputLowCutProcessor()
+        self.out_low_cut_on = False
+        # The matching low-pass trims hiss and sibilant bursts; the cutoff is a slider.
+        self.out_high_cut = OutputHighCutProcessor()
+        self.out_high_cut_on = False
         self.out_gate = OutputGate()
         self.out_gate_on = True
-        self.post_processors = (self.out_gate, self.ai_formant, self.finish, SafetyClampProcessor())
+        self.post_processors = (self.out_low_cut, self.out_high_cut, self.out_gate, self.ai_formant, self.finish, SafetyClampProcessor())
         self._stages = (*self.pre_processors, self.main_processor, *self.post_processors)
         self.performance = TimingStats()
 
@@ -104,6 +114,8 @@ class ProcessorChain(AudioProcessor):
         self.gate.protect_quiet = (getattr(router, 'mode', None) == 'ai_voice'
                                    and ai is not None and is_meanvc2(ai.bridge.parameters.model))
         self.out_gate.enabled = self.out_gate_on and getattr(router, 'mode', None) == 'ai_voice'
+        self.out_low_cut.set_enabled(self.out_low_cut_on and getattr(router, 'mode', None) == 'ai_voice')
+        self.out_high_cut.set_enabled(self.out_high_cut_on and getattr(router, 'mode', None) == 'ai_voice')
         # The finish only ever conditions converted output. The flag rides along
         # per block so a mid-stream route change takes effect on the next block.
         self.finish.route_active = getattr(router, 'mode', 'ai_voice') != 'original'

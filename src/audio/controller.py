@@ -162,9 +162,24 @@ class AudioController:
         if chain.out_gate_on:
             chain.out_gate.set_threshold(db)
 
+    def set_input_low_cut(self, enabled):
+        """Live, in-place: the filter state resets while off, so no restart is needed."""
+        self.engine.chain.low_cut.set_enabled(enabled)
+
     def set_denoise(self, strength):
         """Live, in-place: 0 is a pass-through, so switching needs no stream restart."""
         self.engine.chain.denoise.set_strength(strength)
+
+    def set_output_low_cut(self, enabled, cutoff_hz=100.0):
+        """Live: the chain arms the filter per block, on the AI route only."""
+        self.engine.chain.out_low_cut.set_cutoff(cutoff_hz)
+        self.engine.chain.out_low_cut_on = bool(enabled)
+
+    def set_output_high_cut(self, enabled, cutoff_hz):
+        """Live: the cutoff moves with the slider, the filter state is kept."""
+        chain = self.engine.chain
+        chain.out_high_cut.set_cutoff(cutoff_hz)
+        chain.out_high_cut_on = bool(enabled)
 
     def set_finish(self, enabled):
         """Live, in-place: the stage eases its gain back to unity when switched off."""
