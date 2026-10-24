@@ -583,7 +583,10 @@ class MainWindow(QMainWindow):
         level_note.setObjectName('muted')
         level_note.setWordWrap(True)
         level_section.addWidget(level_note)
-        self.gain, self.gain_label = self._slider(level_section, "音量 (Gain)", -300, 120,
+        # The track stops where GainProcessor still answers: it accepts -20..+20 dB,
+        # and a settings file is clamped to the same, so a slider that travelled past
+        # -20 dB showed a number the engine refused and silently kept the old level.
+        self.gain, self.gain_label = self._slider(level_section, "音量 (Gain)", -200, 120,
                                                   round(self.settings.gain_db * 10))
         self.gate, self.gate_label = self._slider(level_section, "Noise Gate", -800, -100,
                                                  round(self.settings.noise_gate_db * 10))
@@ -618,6 +621,19 @@ class MainWindow(QMainWindow):
         self.auto_level_toggle.toggled.connect(self._auto_level_changed)
         level_section.addWidget(self.auto_level_toggle)
         self._auto_level_changed()
+        # Environmental sound routing for the AI route: broadband transients
+        # (claps, keyboard, knocks) reach the listener raw instead of being
+        # re-synthesised. The streaming route aligns a raw copy in the callback;
+        # the utterance route splices gated raw spans into each converted piece.
+        self.env_passthrough_toggle = QCheckBox('環境音をそのまま通す（拍手・キーボードなど）')
+        self.env_passthrough_toggle.setChecked(self.settings.env_passthrough)
+        self.env_passthrough_toggle.setToolTip('拍手・キーボード・物音などの一過性の環境音を、変換せずそのまま出力します。\n'
+                                               '咳・鼻すすり・くしゃみなど声まわりの音は環境音とみなさず変換します。\n'
+                                               '声が戻るとすぐに通常の変換へ戻ります。既定はON。\n'
+                                               'AI Voice の逐次変換・一括変換で働きます。')
+        self.env_passthrough_toggle.toggled.connect(self._env_passthrough_changed)
+        level_section.addWidget(self.env_passthrough_toggle)
+        self._env_passthrough_changed()
 
         # --- 調整 ②: the voice and the way of talking -----------------------------
         sound_column = self._section(self.band_convert.body, '声と話し方を選ぶ')
@@ -2659,8 +2675,9 @@ class MainWindow(QMainWindow):
     def _build_route_control(self, column):
         """Step ②, second half: how to wait. One decision, three buttons.
 
-        逐次 (no waiting, lighter restoration), 一括 (wait, then restore), 一括-最速
-        (shorter wait, unverified quality). Each button carries its consequence as a
+        逐次 (no waiting, lighter restoration), 一括 (wait, then restore),
+        一括-高品質 (wait longer, upstream-style recipe) and 一括-最速 (shorter
+        wait, unverified quality). Each button carries its consequence as a
         tooltip; the delivery note below states the cost in one line.
         """
         from src.vc.models import DELIVERY_MODES
@@ -3146,10 +3163,10 @@ class MainWindow(QMainWindow):
         self.ai_threads.setCurrentIndex(self.ai_threads.findData(self.settings.ai_threads))
         self.ai_threads.setToolTip('AIの並列数。2が速いPCが多く、4が速い場合もあります。')
         self.ai_device = QComboBox()
-        for label, key in [('自動（GPUがあれば使う）', 'auto'), ('CPU', 'cpu'), ('GPU（CUDA）', 'cuda')]:
+        for label, key in [('自動（CPUで測定）', 'auto'), ('CPU', 'cpu'), ('GPU（CUDA・実測済み）', 'cuda')]:
             self.ai_device.addItem(label, key)
         self.ai_device.setCurrentIndex(self.ai_device.findData(self.settings.ai_device))
-        self.ai_device.setToolTip('推論の実行場所。GPUを使うにはCUDA版torchの導入が必要です（README参照）。')
+        self.ai_device.setToolTip('推論の実行場所。同梱の声はCPUで測定しました。「自動」もCPUを選びます。GPU（CUDA）は Kaggle の Tesla T4 で計測済み（CPUと2.0倍速、差は-76dB）で、選んだときだけ試します。聴感の確認はまだです。')
         for name, combo in [('処理構成', self.ai_quality), ('CPU threads', self.ai_threads), ('実行デバイス', self.ai_device)]:
             details.addWidget(self._labelled_row(name, combo))
         self.ai_brightness, self.ai_brightness_label = self._slider(details, 'AI Brightness', 0, 100, round(self.settings.ai_brightness))
@@ -3641,20 +3658,30 @@ class MainWindow(QMainWindow):
             self.voice_hint.setText('声がありません。右の声リストから声を登録してください。')
             return
         from src.vc.voice_library import metadata
+        # Both voice branches quote numbers out of the user's own profile.json, and a
+        # half-copied or hand-edited one used to raise through this slot -- Qt swallows
+        # that, so the panel silently kept the previous voice's text. Reading it here
+        # turns that into one honest line; the conversion itself never depended on it.
+        if selected.get('standard') or selected.get('user_voice'):
+            try:
+                info = metadata(self.ai_model.currentData())
+                seconds = float(info['reference_seconds'])
+                name = info['name'] if isinstance(info.get('name'), str) else selected['name']
+            except (OSError, ValueError, TypeError, KeyError, RecursionError):
+                self.voice_hint.setText('この声の詳細は profile.json から読み込めません。変換は使えます。')
+                return
         if hasattr(self, 'delete_voice'):
             self.delete_voice.setVisible(bool(selected.get('user_voice')) and not selected.get('standard'))
         if selected.get('standard'):
-            info = metadata(self.ai_model.currentData())
             self.voice_hint.setText(
                 f"アプリ標準の声「{selected['name']}」を選択中\n"
-                f"Reference {info['reference_seconds']:.1f}秒 · 最初からこの声で使えます。"
+                f"Reference {seconds:.1f}秒 · 最初からこの声で使えます。"
                 "自分の声に変えるには「＋ 音声ファイルから声を追加」から。")
             self.voice_note.setText('この声はアプリに同梱されています。変更・削除はできません。')
         elif selected.get('user_voice'):
-            info = metadata(self.ai_model.currentData())
             self.voice_hint.setText(
-                f"登録した声「{info['name']}」を選択中\n"
-                f"Reference {info['reference_seconds']:.1f}秒 · 似具合は録音内容で変わります。")
+                f"登録した声「{name}」を選択中\n"
+                f"Reference {seconds:.1f}秒 · 似具合は録音内容で変わります。")
             self.voice_note.setText('登録はローカルで完結。学習不要・元の音声ファイルはそのまま。')
         else:
             self.voice_hint.setText(selected['name']+'\n今までの声はそのまま選べます。')
@@ -3814,6 +3841,10 @@ class MainWindow(QMainWindow):
         if spec['delivery']=='streaming':
             text=('逐次変換：話しながら120msごとに処理します。\n'
                   '遅延は小さいですが、帯域復元は行いません。')
+        elif mode=='utterance_quality':
+            text=('一括変換-高品質：ソルバ4ステップと、公式推論と同じ全長の条件補間・ノイズで変換します。\n'
+                  '通常の一括変換より待ち時間が長くなります（帯域復元LavaSRは入ります。最大60秒）。\n'
+                  '音質の採否は聴き比べで決めます。')
         elif mode=='utterance_fastest':
             text=('一括変換-最速：まとめ推論＋ソルバ1ステップ・スレッド2以上で待ち時間を減らします。\n'
                   'N150実測（24秒の発話1回）：約16秒（RTF 0.66）。他のアプリがCPUを食っていると1に近づきます。\n'
@@ -4212,6 +4243,13 @@ class MainWindow(QMainWindow):
         if not self._closing:
             self.controller.set_auto_level(self.auto_level_toggle.isChecked())
 
+    def _env_passthrough_changed(self, *_):
+        """Live: the AI slot fades itself between raw and converted blocks."""
+        if not hasattr(self, 'env_passthrough_toggle'):
+            return
+        if not self._closing:
+            self.controller.set_env_passthrough(self.env_passthrough_toggle.isChecked())
+
     def _build_hotkeys(self):
         """In-app shortcuts for instant route switching.
 
@@ -4410,6 +4448,7 @@ class MainWindow(QMainWindow):
         self.denoise_toggle.setChecked(settings.denoise)
         self.denoise_strength.setValue(round(settings.denoise_strength * 100))
         self.auto_level_toggle.setChecked(settings.auto_level)
+        self.env_passthrough_toggle.setChecked(settings.env_passthrough)
         self.finish_toggle.setChecked(settings.finish)
         self.ai_formant_toggle.setChecked(settings.ai_formant_on)
         self.ai_formant_amount.setValue(round(settings.ai_formant * 10))
@@ -4787,10 +4826,13 @@ class MainWindow(QMainWindow):
                 post='LavaSR' if params.enhancer=='lavasr' else '後処理なし'
                 if params.experiment=='fastest':
                     post+='（最速）'
+                utterance=ai.get('utterance',{})
                 self.ai_performance.setText(f"発話を録音 → MeanVC2を発話ごとにリセット・末尾まで変換 → {post} → 全体を出力\n"
                     f"直近VC {ai.get('utterance_vc_seconds',0):.1f}秒 / 後処理 {ai.get('utterance_post_seconds',0):.1f}秒 · 全体RTF {ai.get('rtf',0):.2f}\n"
                     f"受け付け不可 {ai.get('utterance',{}).get('rejected',0)}発話 · 30秒分割 {ai.get('utterance',{}).get('limit_splits',0)}\n"
+                    f"環境音そのまま通す {utterance.get('env_routed_seconds',0):.1f}秒（変換内）+ {utterance.get('env_filled_seconds',0):.1f}秒（発話の間）\n"
                     f"{('FlashSR失敗・MeanVC2のみで出力: '+ai.get('enhancer_error','')) if ai.get('enhancer_error') else '話し終えるまで出力しません。ライブ遅延・声質は要試聴。'}"
+                    + (f"\n環境音バイパス: {utterance.get('env_error')}" if utterance.get('env_error') else '')
                     + (f"\n入力目安: メーター緑〜黄（-20dB前後）。現在 {amplitude_to_db(max(self._display_input,1e-6)):.0f}dB"
                         if params.experiment == 'fastest' else ''))
         self.file_status.setText(self.files.error or self.files.result)
@@ -5001,6 +5043,8 @@ class MainWindow(QMainWindow):
             denoise_strength=(self.denoise_strength.value() / 100 if hasattr(self, 'denoise_strength')
                               else self.settings.denoise_strength),
             auto_level=self.auto_level_toggle.isChecked() if hasattr(self, 'auto_level_toggle') else self.settings.auto_level,
+            env_passthrough=(self.env_passthrough_toggle.isChecked() if hasattr(self, 'env_passthrough_toggle')
+                             else self.settings.env_passthrough),
             finish=self.finish_toggle.isChecked() if hasattr(self, 'finish_toggle') else self.settings.finish,
             ai_formant_on=self.ai_formant_toggle.isChecked() if hasattr(self, 'ai_formant_toggle') else self.settings.ai_formant_on,
             ai_formant=(self.ai_formant_amount.value() / 10 if hasattr(self, 'ai_formant_amount')

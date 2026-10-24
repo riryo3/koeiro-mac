@@ -89,24 +89,68 @@ def test_client_hides_gpus_only_for_forced_cpu(monkeypatch, tmp_path):
         def poll(self):
             return None
 
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
     monkeypatch.setattr(subprocess, 'Popen', FakeProcess)
     monkeypatch.setattr('src.vc.client.worker_python',
                         lambda root, model=None: (tmp_path / 'python', {'PATH': 'x'}))
     monkeypatch.setattr('src.vc.client.asset_root', lambda: tmp_path)
     # The worker's log goes to the writable data directory, never the bundle.
     monkeypatch.setattr('src.vc.client.data_dir', lambda: tmp_path / 'userdata')
-    client = ServiceClient(AIParameters(device='cpu'))
-    client.log_file = None
-    client.start()
-    command = captured['args'][0]
-    assert '--device' in command and command[command.index('--device') + 1] == 'cpu'
-    assert captured['kwargs']['env'].get('CUDA_VISIBLE_DEVICES') == ''
-    client2 = ServiceClient(AIParameters(device='auto'))
-    client2.log_file = None
-    client2.start()
-    command2 = captured['args'][0]
-    assert command2[command2.index('--device') + 1] == 'auto'
-    assert 'CUDA_VISIBLE_DEVICES' not in captured['kwargs']['env']
+    # start() opens ai-worker.log, so every client here has to be closed: an open
+    # handle outliving the test shows up as a ResourceWarning in `python -X dev`.
+    clients = []
+    try:
+        client = ServiceClient(AIParameters(device='cpu'))
+        client.start()
+        clients.append(client)
+        command = captured['args'][0]
+        assert '--device' in command and command[command.index('--device') + 1] == 'cpu'
+        assert captured['kwargs']['env'].get('CUDA_VISIBLE_DEVICES') == ''
+        client2 = ServiceClient(AIParameters(device='auto'))
+        client2.start()
+        clients.append(client2)
+        command2 = captured['args'][0]
+        assert command2[command2.index('--device') + 1] == 'auto'
+        assert 'CUDA_VISIBLE_DEVICES' not in captured['kwargs']['env']
+    finally:
+        for entry in clients:
+            entry.close()
+
+
+def test_auto_only_reaches_a_gpu_that_someone_measured(monkeypatch):
+    """The default must not put a voice on a device it was never run on.
+
+    A CUDA torch install is what a gaming PC already has, so without this rule the
+    shipped route fails on first start for a user who never touched the device
+    setting. Naming the GPU explicitly is still an attempt.
+    """
+    from src.vc import service
+    monkeypatch.setitem(sys.modules, 'torch', _fake_torch(True))
+    assert service.resolve_worker_device('auto', 'an_unmeasured_backend') == 'cpu'
+    assert service.resolve_worker_device('cuda', 'an_unmeasured_backend') == 'cuda'
+    assert service.resolve_worker_device('cpu', 'an_unmeasured_backend') == 'cpu'
+    # A backend measured on a GPU becomes automatic: the shipped default list now
+    # names meanvc2, an empty list keeps the rule strict.
+    assert service.resolve_worker_device('auto', 'meanvc2', ('meanvc2',)) == 'cuda'
+    assert service.resolve_worker_device('auto', 'meanvc2', ()) == 'cpu'
+    assert service.resolve_worker_device('auto', 'meanvc2') == 'cuda'
+
+
+def test_a_device_mismatch_says_which_setting_to_change():
+    from src.vc.service import worker_error_text
+    message = worker_error_text(RuntimeError(
+        'Input type (torch.cuda.FloatTensor) and weight type (torch.FloatTensor) should be the same'))
+    assert '実行デバイス' in message and 'should be the same' in message
+    # "自動" would re-select the measured CUDA route for MeanVC2, so only an
+    # explicit CPU choice is offered as the fix.
+    assert '「CPU」' in message and '「自動」' not in message
+    assert worker_error_text(ValueError('MeanVC2 steps must be 2, 3 or 4')) == \
+        'MeanVC2 steps must be 2, 3 or 4'
 
 
 def test_backend_and_lavasr_reject_bad_devices():
@@ -118,9 +162,15 @@ def test_backend_and_lavasr_reject_bad_devices():
         LavaSR(device='tpu')
 
 
-def test_backend_cuda_without_gpu_fails_cleanly(monkeypatch):
+def test_backend_cuda_without_gpu_fails_cleanly(monkeypatch, tmp_path):
+    """A folder of its own: the refusal must not need the shipped model tree.
+
+    The asset list is empty, so no real weight is hashed and a runner without
+    vc_models reaches the CUDA branch instead of dying in the asset checksum.
+    """
+    import json
     import types
-    from pathlib import Path
+    import numpy as np
     fake_torch = types.SimpleNamespace(
         cuda=types.SimpleNamespace(is_available=lambda: False),
         set_num_threads=lambda *args: None,
@@ -134,9 +184,11 @@ def test_backend_cuda_without_gpu_fails_cleanly(monkeypatch):
     monkeypatch.setitem(sys.modules, 'torchaudio.compliance', fake_torchaudio.compliance)
     monkeypatch.setitem(sys.modules, 'torchaudio.compliance.kaldi', fake_kaldi)
     from src.vc.meanvc2 import MeanVC2Backend
-    from src.vc.models import default_voice_id, profile
-    root = Path(__file__).resolve().parents[1]
-    folder = root / 'models' / profile(default_voice_id())['folder']
+    folder = tmp_path / 'voice'
+    folder.mkdir()
+    (folder / 'runtime.json').write_text(json.dumps(
+        {'backend': 'meanvc2', 'preset': '120ms', 'assets': []}), 'utf-8')
+    np.save(folder / 'fixed_embedding.npy', np.zeros(256, dtype=np.float32))
     backend = MeanVC2Backend(threads=1, device='cuda')
     with pytest.raises(ValueError, match='CUDA requested'):
         backend.load(folder)

@@ -125,3 +125,52 @@ def test_settings_roundtrip_includes_denoise(tmp_path):
 def test_invalid_denoise_settings_fall_back():
     settings = AppSettings.from_dict({"denoise": "yes", "denoise_strength": 5})
     assert settings.denoise is False and settings.denoise_strength == 0.6
+
+
+def test_a_short_callback_block_is_still_suppressed():
+    """The engine hands the chain `work[:frames]`, and a host may call back with fewer
+    frames than prepare() was told about. The spectral scratch buffers were sized only
+    from max_frames, so any short block raised ValueError inside the audio callback:
+    the stage then neither ran nor reported anything the user could see.
+    """
+    for frames in (64, 256, 480, 512, FRAME):
+        processor = NoiseSuppressionProcessor(0.8)
+        processor.prepare(RATE, FRAME)
+        tone = (0.05 * np.sin(2 * np.pi * 900 * np.arange(frames) / RATE)).astype(np.float32)
+        processor.process(tone.reshape(-1, 1).copy(), RATE)   # first block sets the floor
+        again = tone.reshape(-1, 1).copy()
+        before = rms(again)              # the stage writes in place, so measure first
+        out = processor.process(again, RATE)
+        assert out.shape == (frames, 1) and np.isfinite(out).all()
+        # The stage has to actually work at this length: one fifth of the level minus
+        # the -12 dB floor, so clearly quieter than the input and clearly not silence.
+        ratio = rms(out) / max(before, 1e-9)
+        assert 0.15 < ratio < 0.35, (frames, ratio)
+
+
+def test_a_short_block_does_not_stop_the_next_full_block():
+    """Mixed lengths in one stream: the tracker keeps its own bins and the next
+    full-size block still processes, at the same level as an all-full-size stream."""
+    tone = (0.2 * np.sin(2 * np.pi * 300 * np.arange(FRAME) / RATE)).astype(np.float32)
+    full = tone.reshape(-1, 1)
+    mixed = NoiseSuppressionProcessor(0.8)
+    mixed.prepare(RATE, FRAME)
+    for frames in (64, 256, FRAME):
+        block = (0.05 * np.sin(2 * np.pi * 900 * np.arange(frames) / RATE)).astype(np.float32)
+        out = mixed.process(block.reshape(-1, 1).copy(), RATE)
+        assert out.shape == (frames, 1) and np.isfinite(out).all()
+    final = mixed.process(full.copy(), RATE)
+    assert final.shape == (FRAME, 1) and np.isfinite(final).all()
+    assert rms(final) < rms(full)
+
+
+def test_a_block_larger_than_prepare_is_a_clear_error():
+    """The engine refuses frames > max_frames before the chain, so this guard speaks
+    for the next host: growing BUFFERS would otherwise resurface the same numpy
+    broadcast failure the short-block fix removed, just from the other side.
+    """
+    processor = NoiseSuppressionProcessor(0.8)
+    processor.prepare(RATE, FRAME)
+    oversized = np.zeros((FRAME * 2, 1), dtype=np.float32)
+    with pytest.raises(ValueError, match='prepared for'):
+        processor.process(oversized, RATE)

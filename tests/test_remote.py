@@ -1,3 +1,4 @@
+import json
 import socket
 import struct
 import threading
@@ -136,3 +137,55 @@ def test_the_client_connects_on_first_use():
 def test_audio_packing_round_trips_exactly():
     original = np.linspace(-1, 1, 1000, dtype=np.float32)
     assert np.array_equal(remote.unpack(remote.pack(original)), original)
+
+
+def test_a_client_that_never_speaks_leaves_quietly():
+    # The app holds a connection between sentences, and a user pauses longer than
+    # the worker timeout. That used to raise TimeoutError out of serve_connection,
+    # killing the thread and leaving the accepted socket for the garbage collector.
+    peer, connection = socket.socketpair()
+    ran = []
+
+    def handler(*args):
+        ran.append(args)
+        return {}, b''
+
+    try:
+        remote.serve_connection(connection, handler, timeout=0.2)
+        assert connection.fileno() == -1 and not ran
+    finally:
+        peer.close()
+
+
+def test_the_worker_answers_and_then_releases_a_quiet_client():
+    peer, connection = socket.socketpair()
+    answered = []
+
+    def handler(action, request, body):
+        answered.append(action)
+        return {'pong': True}, b''
+
+    request = json.dumps({'action': 'ping', 'protocol': PROTOCOL}).encode('utf-8')
+    peer.sendall(struct.pack('>I', len(request)) + request + struct.pack('>I', 0))
+    thread = threading.Thread(target=remote.serve_connection, args=(connection, handler, 2.0))
+    thread.start()
+    try:
+        header_size, = struct.unpack('>I', _read(peer, 4))
+        header = json.loads(_read(peer, header_size))
+        payload_size, = struct.unpack('>I', _read(peer, 4))
+        assert header == {'pong': True} and _read(peer, payload_size) == b''
+    finally:
+        peer.close()
+        thread.join(5)
+    assert not thread.is_alive() and answered == ['ping']
+    assert connection.fileno() == -1
+
+
+def _read(sock, count):
+    chunks = []
+    while count:
+        chunk = sock.recv(count)
+        assert chunk, 'peer closed before the message arrived'
+        chunks.append(chunk)
+        count -= len(chunk)
+    return b''.join(chunks)

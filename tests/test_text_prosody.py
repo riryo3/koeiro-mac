@@ -131,7 +131,9 @@ class FakeClient:
 
 
 def wait(predicate):
-    until=time.monotonic()+2
+    # A worker state the code reaches at all is reached in well under a second; the
+    # bound only has to survive a full run sharing the CPU, or it fails at wall clock.
+    until=time.monotonic()+10
     while not predicate() and time.monotonic()<until: time.sleep(.005)
     assert predicate()
 

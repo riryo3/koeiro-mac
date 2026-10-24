@@ -56,7 +56,10 @@ class AutoLevelProcessor(AudioProcessor):
         if frames == 0:
             return audio
         rms = float(np.sqrt(np.mean(out.astype(np.float64) ** 2)))
-        if rms >= FLOOR_RMS:
+        # An infinity from upstream would make the ratio exactly zero and log10(0)
+        # raises inside the audio callback; a non-finite level simply holds the
+        # follower where it is, the way amplitude_to_db already treats it.
+        if math.isfinite(rms) and rms >= FLOOR_RMS:
             want_db = 20.0 * math.log10(self.target_rms / max(rms, 1e-9))
             want_db = min(MAX_GAIN_DB, max(MIN_GAIN_DB, want_db))
             tc = ATTACK_SECONDS if want_db > self._gain_db else RELEASE_SECONDS

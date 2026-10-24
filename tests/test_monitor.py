@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from src.audio.monitor import MonitorPlayer, MonitorTap
-from .fakes import FakeBackend, OUTPUT
+from .fakes import FakeBackend, MonitorFakeStream, OUTPUT
 
 
 def test_tap_roundtrip_and_stats():
@@ -54,6 +54,22 @@ def test_player_plays_offered_audio_and_counts_gaps():
     assert (stream.outdata == 0.0).all()
     player.stop()
     assert not player.running
+
+
+def test_monitor_opens_a_device_that_cannot_record():
+    """The reported failure: a USB DAC has no inputs at all.
+
+    PortAudio refuses a duplex stream on it (-9998 Invalid number of channels)
+    no matter how many speakers it reports, so the monitor has to ask for an
+    output-only stream.
+    """
+    backend = FakeBackend()
+    player = MonitorPlayer(backend)
+    player.start(OUTPUT, 48000, 256, MonitorTap())
+    stream = backend.streams[-1]
+    assert isinstance(stream, MonitorFakeStream)
+    assert stream.kwargs['channels'] == 2 and stream.kwargs['device'] == OUTPUT.index
+    player.stop()
 
 
 def test_player_start_failure_is_a_clean_error():
@@ -151,3 +167,22 @@ def test_play_test_tone_reports_a_device_that_cannot_open():
     backend.fail_start = True
     with pytest.raises(AudioEngineError):
         play_test_tone(backend, OUTPUT, 48000, 0.05, -6.0, timeout=0.05)
+
+
+def test_a_starved_read_that_wraps_the_ring_returns_only_what_it_holds():
+    """The wrapped half was bounded by the destination instead of by the audio it
+    actually had: an underrun that also crossed the ring end raised
+    "could not broadcast input array from shape (256,) into shape (448,)" and took
+    the live translation driver down with it, because that reads a fixed scratch.
+    """
+    tap = MonitorTap(seconds=0.1, rate=48000)
+    tap.active = True
+    tap.offer(np.ones(4700, dtype=np.float32))
+    assert tap.read_into(np.zeros(4400, dtype=np.float32)) == 4400
+    tap.offer(np.full(400, 2.0, dtype=np.float32))
+    out = np.zeros(1024, dtype=np.float32)
+    assert tap.read_into(out) == 700
+    np.testing.assert_allclose(out[:300], 1.0)
+    np.testing.assert_allclose(out[300:700], 2.0)
+    # The tail the tap could not fill stays for the caller to silence.
+    assert not out[700:].any()

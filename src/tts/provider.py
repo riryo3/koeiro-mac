@@ -52,7 +52,7 @@ def metadata(root):
     """The install-time metadata, or an empty dict when it is missing or unreadable."""
     try:
         data = json.loads((model_dir(root) / METADATA_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RecursionError):
         return {}
     return data if isinstance(data, dict) else {}
 

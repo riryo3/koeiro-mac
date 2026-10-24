@@ -1,0 +1,36 @@
+Koeiro v0.13.5（Windows 用）
+
+■ 入りしているもの
+  koeiro-v0.13.5-windows-setup.exe        アプリ本体（AI Voice は同梱していません）
+  koeiro-v0.13.5-ai-pack.exe              AI Voice の実行環境と標準ボイス
+  koeiro-v0.13.5-ai-pack-1.bin            ↑ の続きのデータ
+  koeiro-v0.13.5-windows-checksums.txt    setup.exe の sha256
+  koeiro-v0.13.5-ai-pack-checksums.txt    AIパック2ファイルの sha256
+
+■ 設置の手順（この ZIP を解凍したフォルダのまま進めてください）
+  1. koeiro-v0.13.5-windows-setup.exe を実行してインストールします。
+     既定のインストール先は %LOCALAPPDATA%\Programs\Koeiro で、管理者権限は要りません。
+  2. koeiro-v0.13.5-ai-pack-1.bin を koeiro-v0.13.5-ai-pack.exe と同じフォルダに置いてから
+     koeiro-v0.13.5-ai-pack.exe を実行します。インストール先は 1 のフォルダを自動で見つけます。
+  3. Koeiro.exe を起動すると、AI Voice のスロットに「標準ボイス」が入っています。
+     Original と Female DSP は 1 だけでも動きます。
+
+■ 仕様
+  Windows 10 / 11 の 64bit。インストール後は 約1.6 GB、
+  AI ワーカーが使うメモリは 約0.9 GB です。
+
+■ v0.13.5 で変わったところ
+  · 拍手・キーボード・物音などの環境音を、変換せずそのまま届ける機能が付きました
+    （既定でON、設定の「環境音をそのまま通す」で切替）。咳・鼻すすりなど声まわりの
+    音は環境音とみなさず変換します。
+  · 実行デバイス「自動」は、実測済みの MeanVC2 に限り GPU（CUDA）を使います。
+    GPU で問題が出た場合は「CPU」に切り替えてください。
+
+■ 注意
+  · 声の登録（新しい声を足す機能）は AI 開発環境のある機械でやる形になります。
+    変換はこの配布物だけで動きます。
+  · アプリ内蔵の自動更新は GitHub のリリースページを見にいきます。ネットワークが
+    必要です。コード署名は入れていないので、アプリ側の検証は sha256 による
+    破損・途中切れの検知までです。
+  · 開発と検証に使った機械は Windows 11（Intel N150）です。
+    Windows 10 での動作はその機械では測っていません。

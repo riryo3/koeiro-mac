@@ -62,13 +62,15 @@ def parse_version(tag):
         text = text[1:]
     base, dash, pre = text.partition("-")
     parts = base.split(".")
-    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+    # isdecimal, not isdigit: '²'.isdigit() is True while int('²') raises ValueError,
+    # and every caller here only converts UpdateError into something the user sees.
+    if len(parts) != 3 or not all(part.isdecimal() for part in parts):
         raise UpdateError(f"Unparsable version: {tag!r}")
     major, minor, patch = (int(part) for part in parts)
     if not dash:
         return (major, minor, patch, 1, 0)
     kind, num = pre, 0
-    if pre[:8] == "preview." and pre[8:].isdigit():
+    if pre[:8] == "preview." and pre[8:].isdecimal():
         kind, num = "preview", int(pre[8:])
     return (major, minor, patch, 0, 0 if kind != "preview" else num)
 
@@ -136,7 +138,11 @@ def pick_asset(release, platform=None, kind=None):
     if not isinstance(release, dict):
         return None
     tag = str(release.get("tag_name", ""))
-    assets = release.get("assets") or []
+    # GitHub lists assets as objects, but this runs in a background thread whose
+    # exceptions nobody sees: junk from upstream is dropped here instead of
+    # escaping as an AttributeError and silently killing the update check.
+    listed = release.get("assets")
+    assets = [item for item in listed if isinstance(item, dict)] if isinstance(listed, list) else []
     if kind == "frozen":
         if platform == "windows":
             wanted, checksums, asset_kind = (SETUP_ASSET.format(tag=tag),
@@ -237,7 +243,7 @@ def read_package_release(package_dir):
     """release.json of an extracted package, validated."""
     try:
         info = json.loads((Path(package_dir) / "release.json").read_text("utf-8"))
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         raise UpdateError(f"更新パッケージが壊れています: {error}") from error
     if not isinstance(info, dict) or info.get("app") != "Koeiro":
         raise UpdateError("更新パッケージが壊れています")

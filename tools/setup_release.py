@@ -10,8 +10,10 @@ Usage (run from the repository/package root):
     python3.12 tools/setup_release.py --dry-run      # print the plan only
     python3.12 tools/setup_release.py --no-models    # envs + LavaSR, models later
     python3.12 tools/setup_release.py --no-lavasr --recreate
+    python3.12 tools/setup_release.py --nonvoice-models   # gate models only (CI freeze)
 """
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -26,25 +28,51 @@ MEANVC2_HF = "https://huggingface.co/ASLP-lab/MeanVC2/resolve/main"
 KNN_WAVLM_URL = "https://github.com/bshall/knn-vc/releases/download/v0.1/WavLM-Large.pt"
 ECAPA_DRIVE_ID = "1-aE1NfzpRCLxA4GUxX9ITI3F9LlbtEGP"
 
-# (package-relative destination, download URL). None means "clone the repo first".
-# The HF repo keeps the weights flat at its root, while the code reads them from the
-# MeanVC2 git repo's folder layout, so destination and URL only share the file name.
+# (package-relative destination, download URL, minimum bytes, sha256 or None for
+# "size check only"). The HF repo keeps the weights flat at its root, while the code
+# reads them from the MeanVC2 git repo's folder layout, so destination and URL only
+# share the file name. The three small gate models are pinned by hash because their
+# URLs are not release assets; the large checkpoints (no recorded hashes) are not.
 MODEL_FILES = [
     ("vc_models/meanvc2/repo/preprocess/ckpts/fastu2pp_80ms.pt",
-     f"{MEANVC2_HF}/fastu2pp_80ms.pt"),
+     f"{MEANVC2_HF}/fastu2pp_80ms.pt", 1024 * 1024, None),
     ("vc_models/meanvc2/repo/preprocess/ckpts/fastu2pp_160ms.pt",
-     f"{MEANVC2_HF}/fastu2pp_160ms.pt"),
+     f"{MEANVC2_HF}/fastu2pp_160ms.pt", 1024 * 1024, None),
     ("vc_models/meanvc2/repo/ckpts/pretrained_models/meanvc2_40ms_40ms.safetensors",
-     f"{MEANVC2_HF}/meanvc2_40ms_40ms.safetensors"),
+     f"{MEANVC2_HF}/meanvc2_40ms_40ms.safetensors", 1024 * 1024, None),
     ("vc_models/meanvc2/repo/ckpts/pretrained_models/meanvc2_120ms_40ms.safetensors",
-     f"{MEANVC2_HF}/meanvc2_120ms_40ms.safetensors"),
+     f"{MEANVC2_HF}/meanvc2_120ms_40ms.safetensors", 1024 * 1024, None),
     ("vc_models/meanvc2/repo/ckpts/vocos/vocos.pt",
-     f"{MEANVC2_HF}/vocos.pt"),
-    ("vc_models/meanvc2/repo/preprocess/ckpts/wavlm_large.pt", KNN_WAVLM_URL),
+     f"{MEANVC2_HF}/vocos.pt", 1024 * 1024, None),
+    ("vc_models/meanvc2/repo/preprocess/ckpts/wavlm_large.pt", KNN_WAVLM_URL,
+     1024 * 1024, None),
+    # Environment-passthrough gate (src/nonvoice). The gate disables itself when any of
+    # the three is missing, so a failed fetch only loses the feature.
+    ("models/nonvoice/silero_vad.onnx",
+     "https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3"
+     "/src/silero_vad/data/silero_vad.onnx", 2_000_000,
+     "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"),
+    ("models/nonvoice/yamnet.onnx",
+     "https://huggingface.co/audiomagic/yamnet-onnx/resolve/main/yamnet.onnx",
+     15_000_000,
+     "d3835ffbbd4a1bb3e777f0ca217b5007907f5171dd5d17c4236b95b2af8f908e"),
+    ("models/nonvoice/yamnet_class_map.csv",
+     "https://huggingface.co/audiomagic/yamnet-onnx/resolve/main/yamnet_class_map.csv",
+     10_000,
+     "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2"),
 ]
 
 VERIFY_GUI = ["PySide6", "sounddevice", "numpy", "psutil"]
 VERIFY_WORKER = ["torch", "torchaudio", "scipy", "soundfile", "s3prl", "librosa"]
+
+# Voice-registration only. The AI pack does not bundle them (PUBLISHING), and the
+# ECAPA finetune lives on Google Drive, whose anonymous download answers or
+# refuses depending on the source address; the pack jobs skip them so a release
+# never depends on Drive's mood.
+REGISTRATION_ONLY = (
+    "vc_models/meanvc2/repo/preprocess/ckpts/wavlm_large.pt",
+    "vc_models/meanvc2/repo/preprocess/ckpts/wavlm_large_finetune.pth",
+)
 
 
 class SetupError(Exception):
@@ -91,12 +119,26 @@ def run(cmd, cwd):
         raise SetupError(f"失敗 (exit={completed.returncode}): {' '.join(str(p) for p in cmd)}")
 
 
-def download(url, destination, minimum_bytes=1024 * 1024):
-    """Fetch a URL with the standard library; skips when already present."""
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def download(url, destination, minimum_bytes=1024 * 1024, sha256=None):
+    """Fetch a URL with the standard library; skips when already present.
+
+    ``sha256`` pins files whose URL may change under us: anything that fails the
+    hash is deleted and reported as missing, never left in the tree.
+    """
     destination = Path(destination)
     if destination.is_file() and destination.stat().st_size >= minimum_bytes:
-        print(f"  あり: {destination} ({destination.stat().st_size // 1024 // 1024} MB)")
-        return True
+        if sha256 is None or file_sha256(destination) == sha256:
+            print(f"  あり: {destination} ({destination.stat().st_size // 1024 // 1024} MB)")
+            return True
+        print(f"  sha256 が違うので取得し直します: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     print(f"  取得: {url}", flush=True)
     request = urllib.request.Request(url, headers={"User-Agent": "Koeiro-setup"})
@@ -110,8 +152,28 @@ def download(url, destination, minimum_bytes=1024 * 1024):
     if destination.stat().st_size < minimum_bytes or "text/html" in content_type:
         destination.unlink(missing_ok=True)
         return False
+    if sha256 is not None and file_sha256(destination) != sha256:
+        destination.unlink(missing_ok=True)
+        print(f"  sha256 が一致しません: {url}")
+        return False
     print(f"  完了: {destination} ({destination.stat().st_size // 1024 // 1024} MB)")
     return True
+
+
+def fetch_entries(root, dry_run, entries):
+    """Download one MODEL_FILES-shaped group; returns the missing destinations."""
+    missing = []
+    for relative, url, minimum_bytes, sha256 in entries:
+        if dry_run:
+            print(f"  予定: {relative}")
+            continue
+        try:
+            if not download(url, Path(root) / relative, minimum_bytes, sha256):
+                missing.append(relative)
+        except SetupError as error:
+            print(f"  {error}")
+            missing.append(relative)
+    return missing
 
 
 def plan_steps(root, with_models=True, with_lavasr=True, recreate=False):
@@ -158,7 +220,7 @@ def install_filtered_lock(worker, root, dry_run):
         Path(temporary).unlink(missing_ok=True)
 
 
-def fetch_models(root, dry_run):
+def fetch_models(root, dry_run, with_registration=True):
     repo = Path(root) / "vc_models" / "meanvc2" / "repo"
     if not repo.is_dir():
         if shutil.which("git") is None:
@@ -167,18 +229,19 @@ def fetch_models(root, dry_run):
             run(["git", "clone", MEANVC2_REPO, "vc_models/meanvc2/repo"], root)
         else:
             print(f"  予定: git clone {MEANVC2_REPO} vc_models/meanvc2/repo")
-    missing = []
-    for relative, url in MODEL_FILES:
-        if dry_run:
-            print(f"  予定: {relative}")
-            continue
-        try:
-            if not download(url, Path(root) / relative):
-                missing.append(relative)
-        except SetupError as error:
-            print(f"  {error}")
-            missing.append(relative)
-    if not dry_run:
+    # The gate files are optional for the app (the passthrough disables itself
+    # without them), so a fetch failure warns instead of failing the setup; the
+    # frozen-GUI path keeps them required in fetch_nonvoice_models.
+    required = [entry for entry in MODEL_FILES
+                if not entry[0].startswith("models/nonvoice/")
+                and (with_registration or entry[0] not in REGISTRATION_ONLY)]
+    optional = [entry for entry in MODEL_FILES if entry[0].startswith("models/nonvoice/")]
+    missing = fetch_entries(root, dry_run, required)
+    for relative in fetch_entries(root, dry_run, optional):
+        print(f"  非音声ゲートのモデルを取得できませんでした（環境音パススルーは無効のまま）: {relative}")
+    if not with_registration and not dry_run:
+        print("  登録専用のモデル（WavLM/ECAPA）はスキップしました（AIパックには同梱しません）")
+    if with_registration and not dry_run:
         # ECAPA finetune lives on Google Drive. The plain `uc?export=download` link
         # answers a confirm page for large files, so it has to go through the
         # usercontent endpoint with confirm=t; a failed fetch still falls back to
@@ -198,6 +261,18 @@ def fetch_models(root, dry_run):
     if missing and not dry_run:
         raise SetupError("未取得のモデルがあります:\n  - " + "\n  - ".join(missing) +
                          "\nREADME の「モデル配置」に従って手で置いてください")
+
+
+def fetch_nonvoice_models(root, dry_run):
+    """Only the environment-passthrough gate files, for the frozen GUI builds.
+
+    CI freezes the GUI without running the full setup, and the gate needs its three
+    models present in the tree before PyInstaller builds the bundle.
+    """
+    entries = [entry for entry in MODEL_FILES if entry[0].startswith("models/nonvoice/")]
+    missing = fetch_entries(root, dry_run, entries)
+    if missing and not dry_run:
+        raise SetupError("非音声ゲートのモデルを取得できません:\n  - " + "\n  - ".join(missing))
 
 
 def verify_interpreters(root):
@@ -221,6 +296,10 @@ def main(argv=None):
     parser.add_argument("--no-models", action="store_true", help="モデル取得を省略")
     parser.add_argument("--no-lavasr", action="store_true", help="LavaSR 取得を省略")
     parser.add_argument("--recreate", action="store_true", help="venv を作り直す")
+    parser.add_argument("--nonvoice-models", action="store_true",
+                        help="非音声ゲートのモデル3点だけ取得（凍結ビルド用。venv は作らない）")
+    parser.add_argument("--no-registration-models", action="store_true",
+                        help="登録専用のモデル（WavLM/ECAPA）を取得しない（AIパック用。同梱しない）")
     args = parser.parse_args(argv)
     root = Path(args.root)
     dry_run = args.dry_run
@@ -229,6 +308,10 @@ def main(argv=None):
             raise SetupError(f"Python 3.12 が必要です（現在 {sys.version.split()[0]}）")
         if dry_run:
             print(f"想定 Python: 3.12（現在 {sys.version.split()[0]}）")
+        if args.nonvoice_models:
+            print("== 非音声ゲート モデル取得")
+            fetch_nonvoice_models(root, dry_run)
+            return 0
         check_host_tools(with_lavasr=not args.no_lavasr and not dry_run)
         gui, worker = gui_python(root), worker_python(root)
         for title, cmd in plan_steps(root, with_models=not args.no_models,
@@ -252,7 +335,7 @@ def main(argv=None):
                 run([str(gui), "tools/install_lavasr.py"], root)
         if not args.no_models:
             print("== MeanVC2 モデル取得")
-            fetch_models(root, dry_run)
+            fetch_models(root, dry_run, with_registration=not args.no_registration_models)
         if not dry_run:
             print("== 動作確認")
             verify_interpreters(root)

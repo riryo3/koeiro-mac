@@ -2,7 +2,9 @@ import hashlib
 import io
 import json
 import sys
+import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -173,6 +175,66 @@ def test_worker_lazy_loading_and_ten_start_stop():
         assert bridge.client.calls==1
         bridge.stop()
         assert not bridge.alive and bridge.status=='Not Loaded'
+
+
+@pytest.mark.parametrize('name,value', [
+    ('device', 'cpu'), ('tune_sib_db', 4.0), ('tune_cons_db', 4.0),
+    ('tune_caps', 1.2), ('tune_floor_db', 4.0), ('tune_excess_db', 12.0),
+    ('tune_mid', 0.6), ('tune_match', 0.3), ('tune_ptrans', 0.3),
+    ('tune_pcap', 1.5), ('tune_combined', False), ('tune_level_db', -18.0),
+])
+def test_startup_parameter_change_reloads_worker(name, value):
+    """A loaded worker keeps its launch arguments; these fields must restart it."""
+    bridge = AIBridge(client_factory=FakeClient)
+    try:
+        bridge.load()
+        wait(lambda: bridge.status == 'Ready' and bridge.ack_generation == bridge.generation)
+        client = bridge.client
+        old_input, old_output = bridge.input, bridge.output
+        assert old_output.write(np.ones(bridge.chunk_frames, dtype=np.float32))
+        generation = bridge.generation
+        parameters = replace(bridge.parameters, **{name: value})
+
+        bridge.configure(parameters)
+
+        assert client.closed and not bridge.alive
+        assert bridge.status == 'Not Loaded' and bridge.ack_generation == -1
+        assert bridge.generation > generation
+        assert bridge.input is not old_input and bridge.output is not old_output
+        assert bridge.input.available == bridge.output.available == 0
+        bridge.load()
+        wait(lambda: bridge.status == 'Ready' and bridge.ack_generation == bridge.generation)
+        assert bridge.client is not client
+        assert bridge.client.parameters == parameters
+    finally:
+        bridge.stop()
+
+
+@pytest.mark.parametrize('changes', [
+    {}, {'brightness': 60.0}, {'pitch': 5.0}, {'low_cut': False},
+    {'limiter': False}, {'post_fx': False}, {'output_wait_ms': 38.0},
+    {'crossfade_ms': 40.0},
+])
+def test_live_parameter_change_keeps_loaded_worker(changes, monkeypatch):
+    from src.vc.models import VOICE_PROFILES
+    monkeypatch.setitem(VOICE_PROFILES, 'test_live_voice', {'backend': 'beatrice'})
+    bridge = AIBridge(AIParameters(model='test_live_voice'), FakeClient)
+    try:
+        bridge.load()
+        wait(lambda: bridge.status == 'Ready' and bridge.ack_generation == bridge.generation)
+        client = bridge.client
+        old_input, old_output = bridge.input, bridge.output
+        generation = bridge.generation
+        parameters = replace(bridge.parameters, **changes)
+
+        bridge.configure(parameters)
+
+        assert bridge.parameters == parameters
+        assert bridge.client is client and bridge.alive and not client.closed
+        assert bridge.generation == generation and bridge.status == 'Ready'
+        assert bridge.input is old_input and bridge.output is old_output
+    finally:
+        bridge.stop()
 
 
 def test_worker_invalid_output_falls_back_without_abort():
@@ -492,3 +554,88 @@ def test_entering_dsp_clears_suspended_analysis_window_once(monkeypatch):
         router.process(np.zeros((256,1),dtype=np.float32),48000)
         assert len(resets)==2
     finally:router.stop()
+
+
+def test_a_worker_that_will_not_join_still_lets_the_route_stop():
+    """Stop after an inference timeout raised out of this processor: chain.stop()
+    aborted there, so the rest of the teardown never ran and the controller showed
+    the worker text as an app-level audio error. The bridge already carries the
+    failure in its own status, which is where the reader sees it.
+    """
+    class WedgedBridge:
+        def __init__(self):
+            self.status = 'Error'
+            self.error = 'AI worker did not stop'
+
+        def stop(self):
+            raise RuntimeError(self.error)
+
+    processor = AIVoiceProcessor(bridge=WedgedBridge())
+    processor.stop()
+    assert processor.bridge.status == 'Error'
+    assert processor.bridge.error == 'AI worker did not stop'
+
+
+def test_a_worker_that_never_wakes_is_left_saying_error():
+    """Stop gave up on an inference call that ignored the interrupt. The bridge
+    reported status Error but kept worker_state 'Stopping', so the diagnostics line
+    went on promising a stop that had already been abandoned.
+    """
+    class WedgedClient:
+        def __init__(self, parameters=None):
+            self.parameters = parameters
+            self.parked = threading.Event()
+            self.release = threading.Event()
+            self.announced = False
+
+        def start(self): pass
+
+        def read(self):
+            if not self.announced:
+                self.announced = True
+                return {'status': 'Ready'}, np.empty(0, dtype=np.float32)
+            self.release.wait(10)
+            raise EOFError('released')
+
+        def request(self, header, audio=None):
+            if header.get('op') == 'reset':
+                return {'status': 'Ready'}, audio
+            self.parked.set()
+            self.release.wait(10)
+            raise EOFError('released')
+
+        def interrupt(self): pass
+        def close(self): pass
+
+    bridge = AIBridge(client_factory=WedgedClient)
+    bridge.load()
+    wait(lambda: bridge.status == 'Ready')
+    bridge.prepare()
+    bridge.set_active(True)
+    wait(lambda: bridge.ack_generation == bridge.generation)
+    assert bridge.input.write(np.ones(bridge.chunk_frames, dtype=np.float32))
+    bridge.input_ready.signal()
+    wait(lambda: bridge.client.parked.is_set(), seconds=6)
+    with pytest.raises(RuntimeError):
+        bridge.stop()
+    assert bridge.status == 'Error' and bridge.worker_state == 'Error'
+    bridge.client.release.set()
+    wait(lambda: not bridge.alive, seconds=10)
+
+
+
+def test_the_fallback_the_log_names_is_the_one_the_callback_gives():
+    """A log line that says  Original  while the callback mutes is how the next
+    reader chases the wrong bug: the note and the audio must agree on every route.
+    """
+    for delivery, enhancer in (('streaming', 'none'), ('utterance', 'lavasr')):
+        bridge = AIBridge(AIParameters(delivery=delivery, enhancer=enhancer), FakeClient)
+        processor = AIVoiceProcessor(bridge=bridge)
+        processor.prepare(48000, 256)
+        bridge.status = 'Error'
+        bridge.ack_generation = -1
+        block = np.full((256, 1), 0.4, dtype=np.float32)
+        out = processor.process(block, 48000)
+        silenced = float(np.abs(out).max()) == 0.0
+        promised_original = 'Original' in bridge.fallback_note()
+        assert silenced is not promised_original, (delivery, bridge.fallback_note())

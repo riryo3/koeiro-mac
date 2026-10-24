@@ -198,9 +198,13 @@ def worker_environment(python=sys.executable):
 
 def _marker():
     try:
-        return json.loads((asset_root() / 'models' / MARKER).read_text('utf-8'))
-    except (OSError, ValueError):
+        data = json.loads((asset_root() / 'models' / MARKER).read_text('utf-8'))
+    except (OSError, ValueError, RecursionError):
         return {}
+    # src.vc.models applies the bundle restriction while it is being imported, so
+    # anything escaping here would stop the app from starting at all. A marker that
+    # is not an object carries no restriction.
+    return data if isinstance(data, dict) else {}
 
 
 def bundle_profiles():

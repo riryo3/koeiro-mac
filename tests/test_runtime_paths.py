@@ -207,6 +207,26 @@ def test_the_root_override_still_wins_over_the_recorded_folder(tmp_path, monkeyp
     assert runtime_paths.install_root() == moved
 
 
+def test_a_broken_bundle_marker_means_no_restriction(tmp_path, monkeypatch):
+    """src.vc.models applies the bundle restriction while it is being imported, so an
+    unusable marker has to read as "unrestricted" -- an exception here would stop the
+    app from starting at all, not just lose the restriction.
+    """
+    bundle = tmp_path / 'bundle'
+    marker = bundle / 'models' / runtime_paths.MARKER
+    marker.parent.mkdir(parents=True)
+    monkeypatch.setattr(runtime_paths, 'asset_root', lambda: bundle)
+    for junk in ('[1, 2]', 'null', 'not json', '{"profiles": "not a list"}',
+                 '[' * 30000 + ']' * 30000):
+        marker.write_text(junk, 'utf-8')
+        assert runtime_paths.bundle_profiles() is None, junk
+        assert runtime_paths.bundle_deliveries() is None, junk
+    marker.write_text(json.dumps({'profiles': ['user_' + 'a' * 32], 'deliveries': ['utterance_lavasr']}),
+                      'utf-8')
+    assert runtime_paths.bundle_profiles() == frozenset({'user_' + 'a' * 32})
+    assert runtime_paths.bundle_deliveries() == frozenset({'utterance_lavasr'})
+
+
 def test_a_packaged_worker_runs_from_the_install_folder(tmp_path, monkeypatch):
     """The worker imports src.vc.service, which only exists in the source tree.
 

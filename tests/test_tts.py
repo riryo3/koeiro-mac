@@ -47,6 +47,10 @@ def test_metadata_is_read_when_valid(tmp_path):
     assert tts.metadata(tmp_path) == {"license": "Apache-2.0"}
     (base / tts.METADATA_FILE).write_text("{broken", encoding="utf-8")
     assert tts.metadata(tmp_path) == {}
+    # "Unreadable" includes a document nested past the parser's depth limit: the json
+    # scanner raises RecursionError there, not ValueError.
+    (base / tts.METADATA_FILE).write_text('[' * 30000 + ']' * 30000, encoding="utf-8")
+    assert tts.metadata(tmp_path) == {}
 
 
 def test_resample_length_and_dtype():

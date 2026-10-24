@@ -86,8 +86,11 @@ class MonitorTap:
         first = min(take, self.capacity - tail)
         destination[:first] = self.buffer[tail:tail + first]
         if first < take:
+            # Bound the wrapped part by what is taken, not by the whole destination:
+            # a short read (underrun) that also wraps leaves destination[take:] for the
+            # caller to fill with silence, and slicing it here raises ValueError.
             rest = take - first
-            destination[first:] = self.buffer[:rest]
+            destination[first:take] = self.buffer[:rest]
         self.available -= take
         return take
 
@@ -130,9 +133,7 @@ class MonitorPlayer:
             self._scratch = np.empty(blocksize, dtype=np.float32)
             self.tap = tap
             tap.active = True
-            # Output-only: a duplex Stream fails on devices with no input (headphone jack).
-            opener = getattr(self.backend, "OutputStream", None) or self.backend.Stream
-            self._stream = opener(
+            self._stream = self.backend.OutputStream(
                 device=device.index, samplerate=rate, blocksize=blocksize,
                 channels=channels, dtype="float32", latency="high",
                 callback=self._callback,

@@ -12,6 +12,7 @@ Outputs:
 The icon ships as drawn: no backing is added anywhere, so the badge looks
 the same on the taskbar, the window corner and in Explorer.
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -27,6 +28,8 @@ BACKGROUND = (0, 0, 0, 255)
 
 
 def main():
+    # --help must not regenerate tracked assets: parse first, write after.
+    argparse.ArgumentParser(description=__doc__).parse_args()
     icon = Image.open(ASSETS / "icon.png").convert("RGBA")
     logo = Image.open(ASSETS / "logo.png").convert("RGBA")
 

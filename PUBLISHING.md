@@ -9,6 +9,10 @@
 - `models/meanvc2_*/runtime.json`（設定のみ。音声・埋め込みは含まない）
 - 同梱する声：`models/user_voices/<default-voice>/` の `reference.wav`・
   `fixed_embedding.npy`・`runtime.json`・サニタイズ済み `profile.json` のみ
+- 非音声イベントゲートのモデル：`models/nonvoice/` の `silero_vad.onnx`（Silero VAD, MIT）・
+  `yamnet.onnx`・`yamnet_class_map.csv`（audiomagic/yamnet-onnx, Apache-2.0）。
+  凍結前に `tools/setup_release.py --nonvoice-models` で sha256 固定のまま取得し、
+  凍結ビルドに埋め込む（モデルが無い環境ではゲートが無効になるだけで、変換は止まらない）
 - `LICENSE`、`THIRD_PARTY_NOTICES.md`、`README.md`、このファイル
 
 ## 同梱しないもの
@@ -46,14 +50,21 @@
 - [ ] Windows ビルドの PySide6(Qt) LGPLv3 義務を満たした（ライセンス文の同梱、
       Qt の入手先の明記、再リンク可能な動的リンクの維持）
 - [ ] 既定声以外の `models/user_voices/*` が配布物に無い
+- [ ] 凍結ビルドの前に `tools/setup_release.py --nonvoice-models` を通し、非音声ゲートの
+      モデル3点（`models/nonvoice/`）を同梱した
 - [ ] `settings.json`・`logs/`・`recordings/` が配布物に無い
 - [ ] Beatrice/JVS/GPL/CC-BY-NC系の資産が配布物に無い
 - [ ] ソース公開の場合：Git履歴に音声・重み・画面画像・絶対パス・秘密情報が
       残っていない（`git rev-list --objects --all` で wav/mp3/m4a/pt/pth/
       safetensors/onnx/bin/env を検索。残っていれば history rewrite が必要）
 - [ ] 配布先（BOOTH・GitHub等）の規約・年齢表示・サポート窓口を記載した
+- [ ] タグに `notes/release_notes_<tag>.md`（リリース本文用）を入れた。BOOTH ZIP は手元で
+      `tools/build_booth_zip.py` で作った（CI に作らせるときだけ `notes/guide-<tag>-*.txt` も
+      タグに入れ、workflow_dispatch の booth を有効にする）
 - [ ] Windows は setup.exe（＋AIパックを出すなら its parts）を作り、`-checksums.txt` を
       一緒に添付した（実行ファイル版の自動更新は両方が無い版を適用しない）
+- [ ] 添付前に `tools/verify_release_assets.py --tag <tag>` を通した
+      （`release` ワークフローは添付前に自動で通し、落ちれば添付しない）
 - [ ] AIパックに `vendor/encodec` の実体が入っていないこと
       （`tools/build_ai_pack.py` の `check_stage` が検査する）
 - [ ] **版数を上げた後は凍結ビルドを作り直した**（`src/version.py` はバンドルの中に入る。
@@ -78,7 +89,9 @@
   `src/version.py` の `APP_VERSION` です。**タグを打つ前にここを新タグに
   更新すること**（更新忘れは自動更新の無限通知になります）
 - 資産内容：追跡ツリーそのもの＋直下の `release.json`（`tools/build_release_asset.py`
-  が生成）。初回起動時に `tools/setup_release.py` が各OS用の仮想環境とモデルを揃えます
+  が生成。初回起動時に `tools/setup_release.py` が各OS用の仮想環境とモデルを揃えます）、
+  Windows の setup.exe と AIパック、Linux の凍結バンドルと AIパック。すべて
+  `release` ワークフローがタグ push で作って添付します
 - アセット名（OS判定・更新可否はこの名前で行います。変えないこと）：
   - Windows：`koeiro-<tag>-windows.zip`
   - Linux：`koeiro-<tag>-linux.tar.gz`
@@ -92,11 +105,21 @@
 ```sh
 # 例：v1.0.0 を出す
 # 1. src/version.py の APP_VERSION を 1.0.0 に更新してコミット
-# 2. タグを打って push（アセット作成・添付は Actions が自動で行う）
+# 2. リリース本文も書いてコミット（無いと本文は空の下書きになる）
+#    notes/release_notes_v1.0.0.md
+# 3. タグを打って push。あとは release ワークフローが一式を作り、検査してから添付する
 git tag v1.0.0; git push origin v1.0.0
-# 3. 手動確認だけなら Actions → release-assets → Run workflow（dry_run のまま）
-# 4. Windows の実行ファイル版を出すなら ↓ の setup.exe を作って添付
+# 4. 手元確認だけなら Actions → release → Run workflow（tag を入れて dry_run のまま。
+#    リリースには触れず、Artifacts に全部残る）
+# 5. BOOTH に上げる ZIP は手元で作る（BOOTH 節）
 ```
+
+`release` ワークフローのジョブは prepare（タグ確定・版数一致）、selftest、source-assets、
+windows-setup、windows-ai-pack、linux-app、linux-pack、release の8つ。BOOTH ZIP を作る booth
+ジョブは既定では動かず、workflow_dispatch で booth を有効にしたときだけ加わります。
+添付するのは booth 以外の成果物（リリース本文は `notes/release_notes_<tag>.md` があればそれを
+使い、無ければ空の下書き）で、添付の前に `tools/verify_release_assets.py` が一式の有無・
+sha256・更新の選別を通せなければ止まります。
 
 更新時は仮想環境（`.venv`・`vc_models/meanvc2/.venv`・`vc_models/post_lavasr`）を
 引き継ぐため、再ダウンロードは発生しません。依存関係の固定が変わった版では、
@@ -110,13 +133,16 @@ git tag v1.0.0; git push origin v1.0.0
 インストーラはインストール先の外からファイルを差し替えるので、この問題がありません。
 
 ```powershell
-# 1. src/version.py を新タグに更新してコミット・タグ push（通常どおり）
-# 2. 手元で exe を作り直してから setup.exe を出す（PyInstaller と Inno Setup が必要）
+# タグ push なら release ワークフローの windows-setup ジョブが同じ手順を回す。
+# 手元で作り直すときは（PyInstaller と Inno Setup が必要）:
 .\.venv\Scripts\python tools\build_windows_setup.py --tag v1.0.0 --rebuild
-# 3. リリースへ添付（Actions はソースツリーしか作らないので、これは手元添付）
+# 手元で作った場合だけ添付する:
 gh release upload v1.0.0 dist\setup\koeiro-v1.0.0-windows-setup.exe `
                            dist\setup\koeiro-v1.0.0-windows-checksums.txt --clobber
 ```
+
+- CI（`windows-setup` ジョブ）は windows-latest に GUI 用 `.venv` を作って `--rebuild` を回し、
+  `ISCC.exe` がランナーに無ければ `choco install innosetup` で入れます
 
 - アセット名（変えないこと）：`koeiro-<tag>-windows-setup.exe` と
   `koeiro-<tag>-windows-checksums.txt`（`<sha256>  <ファイル名>` の sha256sum 形式）
@@ -138,10 +164,42 @@ gh release upload v1.0.0 dist\setup\koeiro-v1.0.0-windows-setup.exe `
 BOOTH の上限は **1ファイル 1.2GB・1商品あたり合計 10GB**（2026-03-09 時点。
 `booth.pixiv.help` のアップロード容量制限）。torch 環境（実測 2.2GB）とモデル
 （`vc_models/meanvc2/repo/preprocess/ckpts` だけで 1.8GB 超）を1ファイルに収めることは
-できないので、実行ファイル版は次の2点セットで配布します。
+できないので、**OSごとに1 ZIP** にまとめます（v0.13.4 実測）。
 
-1. `koeiro-<tag>-windows-setup.exe` … アプリ本体のみ
-2. `koeiro-<tag>-ai-pack*.exe` / `*.bin` … AIVoice の実行環境とモデル（次節）
+| ZIP | 中身 | 大きさ |
+|---|---|---|
+| `Koeiro_<tag>_Windows.zip` | setup.exe・`-windows-checksums.txt`・ai-pack.exe・ai-pack-1.bin・ai-pack-checksums・入手案内 | 748.2 MB |
+| `Koeiro_<tag>_Linux.zip` | app tar・ai-pack 2分割・`-linux-checksums.txt`・入手案内 | 931.0 MB |
+
+```powershell
+# dist/setup・dist/ai-pack・dist/linux が揃った状態で（入手案内.txt は実測範囲を書いた自前のもの）
+.venv\Scripts\python tools\build_booth_zip.py --tag v1.0.0 `
+  --guide-windows notes\guide-v1.0.0-windows.txt --guide-linux notes\guide-v1.0.0-linux.txt
+# 出来た ZIP の点検だけ（中身の名校験・フラット・stored・破損検査）
+.venv\Scripts\python tools\build_booth_zip.py --tag v1.0.0 --check
+```
+
+- 既定ではこの手順を手元で回します（`release` ワークフローの booth ジョブは
+  workflow_dispatch で明示的に有効にしたときだけ動き、成果物は Artifacts に出ます）
+- このツールが検査するもの：同梱の checksums と各メンバーの sha256、1ファイル 1.2GB・
+  1商品 10GB の上限、ルートのフラットさ、メンバーの重複。v0.13.4 の2枚は
+  `--check` を通ります（2026-10-14 にこの手順で作り直して確認）
+- v0.13.4 の実測: `Koeiro_v0.13.4_Windows.zip` **748,246,799 バイト**（6 メンバー）、
+  `Koeiro_v0.13.4_Linux.zip` **931,060,549 バイト**（5 メンバー）。どちらも最大メンバーは
+  `ai-pack-1`（`.bin` 696,688,088 / `.tar.gz` 451,326,384 バイト）で、1ファイル上限の内側
+
+- どちらも上限の内側（最大の中身は ai-pack-1.bin 696.7 MB）。2ファイルを1商品にしても、
+  Windows用と Linux用で商品を分けても容量は足ります
+- ZIP は **無圧縮（stored）**。中身がすでに gzip / Inno で圧縮済みなので、deflate は
+  CPU を溶くだけでサイズは減りません
+- **アーカイブのルートはフラット**にします。`ai-pack.exe` は `ai-pack-1.bin` を同じ
+  フォルダで探しますし、`install-ai-pack.sh` は2つの tar と checksums を同じフォルダで
+  検証して展開するためです（階層を1つ入れると買い手が「データが見つからない」になる）
+- ZIP 自身の sha256 も `Koeiro_<tag>_booth-checksums.txt` に出すので、アップロード後の
+  突き合わせ（転送で壊れていないか）に使えます
+- 入手案内.txt は**実測した範囲のことだけ**書きます（声の登録が凍結ビルドではできない、
+  Linux の実機音声デバイス確認をしていない、など）。書かないのは許せても、間違ったことを
+  書くのは返品とトラブルになります
 
 BOOTH 販売でもアプリ内蔵の自動更新は GitHub Releases を見にいきます（購入者に
 ネットワークが必要。オフライン完結にしたい場合は setup を再配布する）。
@@ -170,6 +228,9 @@ vc_models\meanvc2\.venv\Scripts\python.exe -m PyInstaller KoeiroWorker.spec --no
 実測（v0.13.2）: ステージング 6650ファイル 1385.6 MB → 圧縮後 `koeiro-v0.13.2-ai-pack.exe` 2.8 MB +
 `koeiro-v0.13.2-ai-pack-1.bin` 664.4 MB（計2ファイル）。アプリ本体の setup 46.3 MB と合わせて
 **BOOTH には3ファイル**（各1.2GB上限に十分収まる）。インストール先は 1.6 GB。
+
+この3手順は `release` ワークフローの windows-ai-pack（Windows）と linux-pack（Linux）が
+CI でもそのまま回します（手元で作った場合は `gh release upload` で添付）。
 
 - **変換結果は開発環境とビット同一**: `voice_demo_original.wav` 3.44秒を 一括変換(LavaSR)
   で通すと、環境venvワーカー / `dist` の凍結ワーカー / インストール済みパック、3者の出力 WAV
@@ -232,8 +293,8 @@ vc_models/meanvc2/.venv/bin/python -m PyInstaller KoeiroWorker.spec --noconfirm
 python tools/build_linux_bundles.py --tag v0.13.3 --kind pack --worker-dist dist/KoeiroWorker
 ```
 
-GitHub Actions 版が `linux-assets` ワークフロー（`workflow_dispatch` 限定・既定 dry_run）で、
-`app` ジョブが上記1・2番目、`pack` ジョブが3番目に対応します。
+GitHub Actions 版は `release` ワークフロー（タグ push か workflow_dispatch、既定 dry_run）に
+統合してあり、`linux-app` ジョブが上記1・2番目、`linux-pack` ジョブが3番目に対応します。
 
 - アセット名（変えないこと）:
   - `koeiro-<tag>-linux-app.tar.gz` … 凍結 GUI（`Koeiro` + `_internal`）
@@ -241,8 +302,9 @@ GitHub Actions 版が `linux-assets` ワークフロー（`workflow_dispatch` �
     1ファイル上限に合わせるため2分割。`install-ai-pack.sh` が両方を展開する）
   - `koeiro-<tag>-linux-checksums.txt` … 上の sha256（`sha256sum -c` 形式）。
     **アプリバンドルを含む一式のときだけこの名前**（実行ファイル版の自動更新が読む名前）。
-    パックだけのビルドは `koeiro-<tag>-linux-ai-pack-checksums.txt` に出す。CI は app/pack
-    の2ジョブが同じリリースへ上げるので、同名だと後の物が前者を潰して app の行が消える
+    パックだけのビルドは `koeiro-<tag>-linux-ai-pack-checksums.txt` に出す。CI では app と pack が
+    別ジョブなのでどちらも自分の名前で書き、組み立ての段で
+    `tools/build_linux_bundles.py --kind checksums` が3行の1枚に統合してから添付する
   - ※ ソースツリーの `koeiro-<tag>-linux.tar.gz` とは**別名**。更新確認は名前完全一致で
     選ぶので混同しません（`src/app_update.py: pick_asset`）
 - 買い手側の手順: tar を展開して `./Koeiro/Koeiro`。Debian/Ubuntu 系ではシステムの
@@ -268,22 +330,33 @@ GitHub Actions 版が `linux-assets` ワークフロー（`workflow_dispatch` �
   出力は Windows の venv ワーカーと同じ入力に対しサンプル数一致・最大差 18/32768
   （≒ -66 dBFS、平均差 2.9e-6）。プラットフォーム側の浮動小数の丸め差で、 packaging の
   ズレではありません。**試聴判定ではなく「同じ計算に乗っている」だけの検査**です
+- v0.13.3 の Linux 配布物（CI 製）実測: app tar **101.7 MiB** / パック **405.6 + 360.8 MiB**
+  （ステージング 6158ファイル 1673.3 MB）。BOOTH の1ファイル上限 1.2 GB に対して3点とも余裕。
+  インストール済みは 1.9 GB（`du -sh` を bookworm コンテナで実測）
+- v0.13.4 の Linux 配布物（Windows + Docker 経路で作成）実測: app tar **101,322,360 バイト**、
+  パック **451,326,384 + 378,408,433 バイト**（ステージング 6,158 ファイル 1,673.3 MB）。
+  bookworm コンテナで `sha256sum -c` → `install-ai-pack.sh` → `--smoke-test`（exit 0、
+  バンドルは `v0.13.4` と報告）→ 保存 WAV 3.439 秒の変換まで通した（165,072 サンプル、
+  帯域復元のフォールバックなし、レポートは `dist/linux-install-verify-0134/`）
+- v0.13.3 の Linux 実績（表示は `tools` と同じ MiB 基準）: app tar **101.7 MB**、
+  AIパック **406.0 MB + 360.8 MB**（ステージング 6,158ファイル 1,673.3 MB）。
+  3点の sha256 は GitHub が計算した digest と一致することを確認済み
 - **`src/vc` を変えたらワーカーを作り直す**。凍結ワーカーは自分の `src/vc` を中に取り込んで
   いるので、モデルの重りが同じでも実行ファイルの中身は古くなります。`dist/linux/*.tar.gz`
   の member 時刻と `git log -1 --format=%ci` を見較べれば、作り直しが要るか分かります
-- `linux-assets` は v0.13.3 で初実行しました（**app 1m39s / pack 7m26s**、ubuntu-22.04）。
-  通るまでに落とした原因は上の「判明していること」と、コミット履歴の
-  `linux-assets` 系メッセージに1件ずつ書いてあります。dry_run で Artifacts と
-  bookworm 起動確認を見てから `gh release upload` のフラグを立てます。CI の pack ジョブは
-  `tools/setup_release.py` で環境ごと作り直すため、ワーカーの実行 Python が手元（3.11）と
-  ずれます。**成果物はリリースへ自動では上がりません**（既定が dry_run）
+- 凍結 Linux ビルドの CI 初実行は v0.13.3（当時の `linux-assets`、**app 1m39s / pack 7m26s**、
+  ubuntu-22.04）。通るまでに落とした原因は上の「判明していること」と、コミット履歴の
+  `linux-assets` 系メッセージに1件ずつ書いてあります。統合後の `release` ワークフローでは
+  linux-app / linux-pack の2ジョブとして動き、タグ push（または dry_run=false の手動実行）で
+  リリースへ自動で上がります。CI の pack ジョブは `tools/setup_release.py` で環境ごと
+  作り直すため、ワーカーの実行 Python が手元（3.11）とずれます
 
 ### 判明していること（Linux ビルド時に効く）
 
 - **ビルドしたマシンの glibc が買い手の下限になる**。ubuntu-24.04 ランナーで凍結すると
   `libpython3.12.so.1.0: version GLIBC_2.38 not found` で Debian 12 が起動できませんでした
   （実測: bookworm コンテナで落、ビルド側のランナーでは通る）。ビルドは ubuntu-22.04、
-  起動確認は一段古い Debian bookworm のコンテナで行います（`linux-assets` の
+  起動確認は一段古い Debian bookworm のコンテナで行います（`release` ワークフローの
   「Debian bookworm で起動確認」ステップ）
 - `Koeiro.spec` は `sys.platform == 'win32'` のときだけ `female_dsp_x64.dll` と
   `assets/icon.ico` を入れます（Windows 専用資産）

@@ -10,6 +10,11 @@ Linux has no Inno Setup, so an "installer" here is a folder you unpack into. The
 bundle is a directory holding ``Koeiro`` beside ``_internal``, which is exactly the
 layout ``src/runtime_paths.py`` expects, and an AI pack unpacks into the same folder.
 
+``--kind checksums`` is the assembling step, not a build: it reads the app and pack
+tars already in ``--out`` and writes the one sheet both consumers read (the in-app
+updater verifies the app row, ``install-ai-pack.sh`` greps the pack rows). The CI
+app and pack jobs run apart, so each writes its own sheet first.
+
     .venv\\Scripts\\python tools\\build_linux_bundles.py --tag v0.13.3 --kind all
 
 The build happens inside the container's own filesystem: an NTFS bind mount is far too
@@ -265,11 +270,38 @@ def write_checksums(out_dir, tag, files):
     return path
 
 
+def existing_parts(tag, out_dir):
+    """The three tars a combined sheet describes, in the order they ship."""
+    out_dir = Path(out_dir)
+    parts = [out_dir / f"koeiro-{tag}-linux-app.tar.gz",
+             out_dir / f"koeiro-{tag}-linux-ai-pack-1.tar.gz",
+             out_dir / f"koeiro-{tag}-linux-ai-pack-2.tar.gz"]
+    missing = [path.name for path in parts if not path.is_file()]
+    if missing:
+        raise SetupError("checksums を統合する3点がありません: " + ", ".join(missing))
+    return parts
+
+
+def merge_checksums(tag, out_dir):
+    """Write the sheet the updater and install-ai-pack.sh were built against.
+
+    The app job and the pack job write their own sheets, because they run as
+    separate CI jobs and the second would otherwise clobber the first. What the
+    assembled tree should ship is one sheet holding all three rows, which is what
+    both consumers parse.
+    """
+    out_dir = Path(out_dir)
+    path = write_checksums(out_dir, tag, existing_parts(tag, out_dir))
+    (out_dir / f"koeiro-{tag}-linux-ai-pack-checksums.txt").unlink(missing_ok=True)
+    return path
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", required=True, help="例: v0.13.3")
     parser.add_argument("--kind", default="all",
-                        choices=("all", "app", "worker", "pack"))
+                        choices=("all", "app", "worker", "pack", "checksums"),
+                        help="checksums は組み上がった3点から統合 checksums だけを作る")
     parser.add_argument("--root", default=".", help="リポジトリの場所")
     parser.add_argument("--out", default=None, help="出力先（既定: dist/linux）")
     parser.add_argument("--timeout", type=int, default=5400, help="1ビルドの上限秒")
@@ -286,6 +318,9 @@ def main(argv=None):
     engine = args.engine or ("local" if os.name == "posix" else "docker")
     produced = []
     try:
+        if args.kind == "checksums":
+            print(f"checksums: {merge_checksums(args.tag, out_dir)}")
+            return 0
         if engine == "docker":
             require_docker(root)
         sys.path.insert(0, str(root))

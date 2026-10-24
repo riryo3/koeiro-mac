@@ -92,3 +92,27 @@ def test_the_chain_carries_a_leveler_that_starts_off():
                           for i in range(0, len(signal), 480)])
     # Past the gate's opening transient, a disabled chain is transparent.
     np.testing.assert_array_equal(out[48000:], signal[48000:])
+
+
+def test_a_block_that_arrives_as_infinity_holds_the_follower_instead_of_raising():
+    """A non-finite block made the ratio exactly zero, and math.log10(0) raises:
+    the follower ran inside the audio callback, so the engine died instead of
+    letting the safety clamp downstream clean the samples up.
+    """
+    leveler = AutoLevelProcessor(enabled=True)
+    leveler.prepare(SAMPLE_RATE, 256)
+    for value in (np.inf, -np.inf, np.nan):
+        block = np.full((256, 1), value, dtype=np.float32)
+        out = leveler.process(block, SAMPLE_RATE)
+        assert leveler._gain_db == 0.0, value
+        assert out.shape == block.shape
+
+    try:
+        chain = ProcessorChain(main_processor=PassthroughProcessor())
+        chain.leveler.enabled = True
+        chain.prepare(SAMPLE_RATE, 256)
+    except (OSError, RuntimeError):
+        pytest.skip('Female DSP native library unavailable')
+    cleaned = np.asarray(chain.process(np.full((256, 1), np.inf, dtype=np.float32),
+                                       SAMPLE_RATE))
+    assert np.isfinite(cleaned).all()

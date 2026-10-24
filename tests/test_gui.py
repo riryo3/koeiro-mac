@@ -110,6 +110,71 @@ def test_error_display_then_restart(window, qapp):
     pump(qapp, lambda: window.stop_button.isEnabled())
 
 
+def test_the_gain_track_offers_only_levels_the_engine_answers(window, qapp):
+    """The track travelled to -30 dB while GainProcessor accepts -20..+20 and a
+    settings file is clamped to the same. Below -20 the slot raised, Qt logged it and
+    the label kept showing the dragged number over a gain the engine never took.
+    """
+    window, backend = window
+    for value in (window.gain.minimum(), window.gain.maximum()):
+        window.gain.setValue(value)
+        assert window.controller.engine.chain.gain._target == pytest.approx(
+            10 ** (value / 10 / 20))
+    assert window.gain_label.text().startswith(f"{window.gain.maximum() / 10:+.1f}")
+
+
+def test_no_control_offers_a_value_the_settings_validator_refuses(window, qapp):
+    """The whole app, not just the gain track: every numeric widget at both ends, every
+    combo entry and both checkbox states have to survive a capture-save-revalidate
+    round trip unchanged. A control whose range reaches past the validator shows a
+    number the engine silently never took, exactly like the gain slider did.
+    """
+    import dataclasses
+    from PySide6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QSlider, QSpinBox
+    from src.settings.manager import AppSettings
+
+    window, backend = window
+    offenders = []
+
+    def capture(label):
+        window._capture_settings()
+        produced = dataclasses.asdict(window.settings)
+        revalidated = dataclasses.asdict(AppSettings.from_dict(produced))
+        for name, value in produced.items():
+            if revalidated[name] != value:
+                offenders.append(f"{label}: {name} {value!r} -> {revalidated[name]!r}")
+
+    for kind in (QSlider, QSpinBox, QDoubleSpinBox):
+        # No enabled filter here: a slider that is disabled in the current mode is
+        # enabled in another one, and its extremes are values the user can reach.
+        for widget in window.findChildren(kind):
+            before = widget.value()
+            for position in (widget.minimum(), widget.maximum()):
+                widget.setValue(position)
+                capture(f"{type(widget).__name__}:{position}")
+            widget.setValue(before)
+    for widget in window.findChildren(QComboBox):
+        if not widget.isEnabled():
+            continue
+        before = widget.currentIndex()
+        for index in range(widget.count()):
+            widget.setCurrentIndex(index)
+            qapp.processEvents()
+            capture(f"QComboBox:{widget.objectName() or before}#{index}")
+        widget.setCurrentIndex(before)
+    for widget in window.findChildren(QCheckBox):
+        if not widget.isEnabled():
+            continue
+        before = widget.isChecked()
+        for state in (True, False):
+            widget.setChecked(state)
+            qapp.processEvents()
+            capture(f"QCheckBox:{widget.objectName()}={state}")
+        widget.setChecked(before)
+    qapp.processEvents()
+    assert not offenders
+
+
 def test_close_during_running_releases_stream_and_saves(window, qapp):
     window, backend = window
     window.start_button.click()

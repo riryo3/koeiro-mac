@@ -310,3 +310,75 @@ def test_local_engine_refuses_to_run_on_windows(tmp_path):
     from tools import build_linux_bundles
     with pytest.raises(SetupError):
         build_linux_bundles.build_local("app", tmp_path, tmp_path / "out.tar.gz", 60)
+
+
+def test_the_linux_runtime_library_list_has_one_source():
+    """The apt list is `RUNTIME_APT`; the CI job and the README used to copy it.
+
+    The verification container had the seven package names written out a second time
+    (the file's own comment warns that one of the two then goes stale), and the
+    README's Linux source-tree install omitted the Qt libraries entirely, so a clean
+    Debian box followed the doc and PySide6 refused to start.
+    """
+    from tools import build_linux_bundles
+    root = Path(__file__).resolve().parents[1]
+    packages = set(build_linux_bundles.RUNTIME_APT)
+    # Every workflow file is read: merging or renaming them must not drop the guard.
+    workflows = sorted((root / ".github" / "workflows").glob("*.yml"))
+    assert workflows, ".github/workflows にワークフローがありません"
+    combined = "\n".join(path.read_text("utf-8") for path in workflows)
+    assert "steps.runtime-apt.outputs.packages" in combined
+    for package in packages:
+        assert combined.count(package) <= 1, f"{package} copied into the workflow again"
+
+    readme = (root / "README.md").read_text("utf-8").splitlines()
+    command = []
+    continuation = chr(92)  # the shell line-continuation the README command uses
+    for line_number, line in enumerate(readme):
+        if line.strip().startswith("sudo apt install"):
+            command, cursor = [], line_number
+            while True:
+                command.append(readme[cursor].strip().rstrip(continuation))
+                if not readme[cursor].rstrip().endswith(continuation):
+                    break
+                cursor += 1
+            break
+    assert command, "the README no longer shows a Linux apt install command"
+    joined = " ".join(command)
+    missing = sorted(package for package in packages if package not in joined)
+    assert not missing, f"README Linux setup is missing {missing}"
+
+
+def test_checksums_mode_merges_the_three_linux_parts(tmp_path, capsys):
+    """The app job and the pack job run apart, so the shipping sheet is written here.
+
+    Both consumers exist: the in-app updater reads the app row out of
+    `koeiro-<tag>-linux-checksums.txt`, and install-ai-pack.sh greps the pack rows
+    out of the sheet it finds. A pack-only sheet would leave the packs unverified
+    at install time.
+    """
+    from tools import build_linux_bundles as bundles
+    out = tmp_path / "linux"
+    out.mkdir()
+    parts = ["koeiro-v9.9.9-linux-app.tar.gz", "koeiro-v9.9.9-linux-ai-pack-1.tar.gz",
+             "koeiro-v9.9.9-linux-ai-pack-2.tar.gz"]
+    for name in parts:
+        (out / name).write_bytes(name.encode("utf-8"))
+    (out / "koeiro-v9.9.9-linux-ai-pack-checksums.txt").write_text("x\n", "utf-8")
+    assert bundles.main(["--tag", "v9.9.9", "--kind", "checksums",
+                         "--out", str(out), "--root", str(tmp_path)]) == 0
+    sheet = out / "koeiro-v9.9.9-linux-checksums.txt"
+    rows = [line.split("  ", 1)[1] for line in sheet.read_text("utf-8").splitlines()]
+    assert rows == parts
+    assert not (out / "koeiro-v9.9.9-linux-ai-pack-checksums.txt").exists()
+    assert "checksums" in capsys.readouterr().out
+
+
+def test_checksums_mode_names_the_parts_that_are_missing(tmp_path, capsys):
+    from tools import build_linux_bundles as bundles
+    out = tmp_path / "linux"
+    out.mkdir()
+    (out / "koeiro-v9.9.9-linux-app.tar.gz").write_bytes(b"app")
+    assert bundles.main(["--tag", "v9.9.9", "--kind", "checksums",
+                         "--out", str(out), "--root", str(tmp_path)]) == 1
+    assert "linux-ai-pack-1.tar.gz" in capsys.readouterr().out

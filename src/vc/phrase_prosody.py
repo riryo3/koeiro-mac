@@ -239,6 +239,25 @@ class PhraseRepair:
             result[lo-start:hi-start] = array[lo-self.origin:hi-self.origin]
         return result
 
+    def settle(self):
+        """Wait for the outstanding analysis, for a caller that is not in a hurry.
+
+        The streaming route submits one analysis job per target and applies it
+        only if it is already done, so a hop cadence faster than the analysis
+        turns corrections into late_bypass. A caller holding the whole utterance
+        can wait here instead, which is why the offline path calls it before each
+        hop. Returns whether a job was outstanding; a failed job is left for
+        `process` to account for.
+        """
+        pending = self.pending
+        if pending is None:
+            return False
+        try:
+            pending[2].result()
+        except Exception:
+            pass
+        return True
+
     def process(self, source, voice):
         if source.shape != (HOP,) or voice.shape != (HOP,) or not np.isfinite(source).all() or not np.isfinite(voice).all():
             raise ValueError('Expected finite mono 160ms chunks')
@@ -480,8 +499,9 @@ def retrospective_pitch(source48, voice48, analysis=None, transfer=0.20, max_shi
     on the whole utterance at 48 kHz with a wider ±1.0 st cap: it picks up the
     phrase-level residue the streaming repair left behind (late-bypassed
     windows, ending contours). Only confidently periodic vowel frames are
-    touched, in 40 ms grains with sin^2 crossfades; breaths, onsets, unvoiced
-    frames and octave jumps bypass exactly. Same length in, same length out.
+    touched, in 40 ms grains with sin^2 crossfades; unvoiced frames, breaths
+    and octave jumps bypass, and the first 300 ms of a phrase takes half the
+    correction rather than none. Same length in, same length out.
     """
     source48 = np.asarray(source48, dtype=np.float32)
     voice48 = np.asarray(voice48, dtype=np.float32)
@@ -519,8 +539,6 @@ def retrospective_pitch(source48, voice48, analysis=None, transfer=0.20, max_shi
     # Onset guard: halve corrections in the first 300 ms.
     onset_frames = int(300/40)
     smooth[:onset_frames] *= 0.5
-    floor = float(np.percentile(a[:, 2], 5))
-    breath = ((~voiced) & (a[:, 1] < 0.4) & (a[:, 2] > floor+3.0) & (b[:, 2] > floor+3.0))
     out = voice48.copy()
     edited = 0
     step = 1920  # 40 ms grains at 48 kHz, mirroring the live 40 ms path.

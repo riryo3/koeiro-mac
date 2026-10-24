@@ -7,6 +7,7 @@ and ``KOEIRO_ROOT`` still overrides it when the executable is moved.
 
 Run before PyInstaller; ``Koeiro.spec`` bundles the file it writes.
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from src.runtime_paths import ROOT_FILE  # noqa: E402  (needs the path above)
 
 
 def main():
+    # --help must not regenerate tracked assets: parse first, write after.
+    argparse.ArgumentParser(description=__doc__).parse_args()
     target = ROOT / ROOT_FILE
     target.write_text(str(ROOT), encoding='utf-8')
     print(f'wrote {target.name}: {ROOT}')

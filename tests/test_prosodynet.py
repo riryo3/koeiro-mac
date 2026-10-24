@@ -10,6 +10,19 @@ from src.prosodynet.losses import prosody_loss
 from src.prosodynet.model import ProsodyNetS
 
 
+def dataset_root():
+    """The dataset is an external artifact, so its two tests report why they did not run.
+
+    Before this they died with FileNotFoundError on any machine without
+    voice_sample/prosody_dataset_v2, which reads as a regression in the model code.
+    """
+    from pathlib import Path
+    root = Path(os.environ.get('PROSODYNET_DATASET', 'voice_sample/prosody_dataset_v2'))
+    if not (root / 'splits' / 'splits.json').is_file():
+        pytest.skip(f'ProsodyNet dataset not present at {root}')
+    return root
+
+
 def test_model_is_causal_for_prefix():
     torch.manual_seed(1)
     model = ProsodyNetS(8, channels=32, hidden=40).eval()
@@ -66,14 +79,13 @@ def test_loss_respects_padding_and_voiced_mask():
 
 
 def test_dataset_split_has_no_leakage():
-    root = __import__("pathlib").Path(os.environ.get("PROSODYNET_DATASET", "voice_sample/prosody_dataset_v2"))
-    splits = load_splits(root)
+    splits = load_splits(dataset_root())
     assert split_leakage(splits) == []
     assert len(splits["test"]) == 49
 
 
 def test_normalization_is_train_only_and_finite():
-    root = __import__("pathlib").Path(os.environ.get("PROSODYNET_DATASET", "voice_sample/prosody_dataset_v2"))
+    root = dataset_root()
     splits = load_splits(root)
     info = training_statistics(root, splits["train"])
     sample = load_sample(root, splits["test"][0])

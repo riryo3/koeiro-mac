@@ -5,6 +5,7 @@ builds a throwaway git repository (skipped when git is missing), and the setup
 script is exercised through --dry-run plus its pure helpers.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -123,6 +124,20 @@ def test_setup_dry_run_executes_nothing(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "GUI 依存関係" in out and "torch" in out
     assert not (tmp_path / ".venv").exists()
+
+
+def test_pack_jobs_skip_the_registration_only_weights(tmp_path, capsys):
+    """The AI pack does not bundle WavLM/ECAPA, and the ECAPA download lives on
+    Google Drive, whose anonymous fetch can be refused per source address; the
+    pack path must not depend on it."""
+    assert setup_release.main(["--root", str(tmp_path), "--dry-run",
+                               "--no-lavasr", "--no-registration-models"]) == 0
+    out = capsys.readouterr().out
+    assert "wavlm_large.pt" not in out
+    assert "fastu2pp_160ms" in out
+    assert setup_release.main(["--root", str(tmp_path), "--dry-run", "--no-lavasr"]) == 0
+    out = capsys.readouterr().out
+    assert "wavlm_large.pt" in out
 
 
 def test_setup_requires_python_312_for_real_runs(tmp_path, monkeypatch):
@@ -249,3 +264,106 @@ def test_version_tag_must_match_the_build_reports(tmp_path):
     build_windows_setup.check_version_tag(root, "v1.2.3")
     with pytest.raises(build_windows_setup.SetupError):
         build_windows_setup.check_version_tag(root, "v1.2.4")
+
+
+def test_asset_builders_answer_help_without_touching_assets(tmp_path):
+    """`--help` used to run the whole job: asking a brand tool for its usage wrote
+    assets/icon.ico, the PNGs and Koeiro.desktop over the tracked copies.
+    """
+    import hashlib
+    root = Path(__file__).resolve().parents[1]
+    tracked = [root / "assets" / name for name in ("icon.ico", "brand.png", "social.png")]
+    tracked.append(root / "Koeiro.desktop")
+    before = {path: path.read_bytes() for path in tracked if path.is_file()}
+
+    def digest(data):
+        return hashlib.sha256(data).hexdigest()
+
+    try:
+        # The usage text carries this repository's path, whose Japanese characters the
+        # child writes in whatever encoding it was given. Left to the locale, a cp932
+        # parent reading a UTF-8 child turns stdout into None instead of a failed assert.
+        child = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        for script in ("build_brand.py", "build_desktop.py", "write_build_root.py",
+                       "rtf_baseline.py"):
+            done = subprocess.run([sys.executable, str(root / "tools" / script), "--help"],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=180, cwd=str(tmp_path), env=child)
+            assert done.returncode == 0, (script, done.stderr[-400:])
+            assert "usage:" in done.stdout, (script, done.stdout[:200])
+        for path, content in before.items():
+            assert digest(path.read_bytes()) == digest(content), f"--help rewrote {path.name}"
+    finally:
+        for path, content in before.items():
+            if path.read_bytes() != content:
+                path.write_bytes(content)
+
+
+def _release_tree(tmp_path, tag="v9.9.9"):
+    """A dist tree shaped like the assembled release, at test sizes."""
+    from src.app_update import sha256_of
+    dist = tmp_path / "dist"
+    files = {
+        dist / f"koeiro-{tag}-windows.zip": b"source windows",
+        dist / f"koeiro-{tag}-linux.tar.gz": b"source linux",
+        dist / "setup" / f"koeiro-{tag}-windows-setup.exe": b"setup",
+        dist / "ai-pack" / f"koeiro-{tag}-ai-pack.exe": b"aipack",
+        dist / "ai-pack" / f"koeiro-{tag}-ai-pack-1.bin": b"bin" * 40,
+        dist / "linux" / f"koeiro-{tag}-linux-app.tar.gz": b"app",
+        dist / "linux" / f"koeiro-{tag}-linux-ai-pack-1.tar.gz": b"one",
+        dist / "linux" / f"koeiro-{tag}-linux-ai-pack-2.tar.gz": b"two",
+    }
+    for path, payload in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    by_name = {path.name: path for path in files}
+
+    def sheet(path, names):
+        lines = [f"{sha256_of(by_name[name])}  {name}" for name in names]
+        path.write_text("\n".join(lines) + "\n", "utf-8")
+
+    sheet(dist / "setup" / f"koeiro-{tag}-windows-checksums.txt",
+          [f"koeiro-{tag}-windows-setup.exe"])
+    sheet(dist / "ai-pack" / f"koeiro-{tag}-ai-pack-checksums.txt",
+          [f"koeiro-{tag}-ai-pack.exe", f"koeiro-{tag}-ai-pack-1.bin"])
+    sheet(dist / "linux" / f"koeiro-{tag}-linux-checksums.txt",
+          [f"koeiro-{tag}-linux-app.tar.gz", f"koeiro-{tag}-linux-ai-pack-1.tar.gz",
+           f"koeiro-{tag}-linux-ai-pack-2.tar.gz"])
+    return dist
+
+
+def test_verify_release_assets_accepts_the_assembled_set(tmp_path, capsys):
+    from tools import verify_release_assets
+    dist = _release_tree(tmp_path)
+    assert verify_release_assets.main(["--tag", "v9.9.9", "--dist", str(dist)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "ok" and report["files"] == 11
+    assert "windows/frozen" in " ".join(report["updater"])
+    assert "linux/frozen" in " ".join(report["updater"])
+
+
+def test_verify_release_assets_refuses_a_part_that_no_longer_matches(tmp_path, capsys):
+    from tools import verify_release_assets
+    dist = _release_tree(tmp_path)
+    (dist / "linux" / "koeiro-v9.9.9-linux-ai-pack-1.tar.gz").write_bytes(b"tampered")
+    assert verify_release_assets.main(["--tag", "v9.9.9", "--dist", str(dist)]) == 1
+    assert "sha256 が違います" in capsys.readouterr().err
+
+
+def test_verify_release_assets_requires_the_row_the_linux_updater_reads(tmp_path, capsys):
+    from tools import verify_release_assets
+    dist = _release_tree(tmp_path)
+    sheet = dist / "linux" / "koeiro-v9.9.9-linux-checksums.txt"
+    rows = [line for line in sheet.read_text("utf-8").splitlines()
+            if "linux-app.tar.gz" not in line]
+    sheet.write_text("\n".join(rows) + "\n", "utf-8")
+    assert verify_release_assets.main(["--tag", "v9.9.9", "--dist", str(dist)]) == 1
+    assert "app tar" in capsys.readouterr().err
+
+
+def test_verify_release_assets_names_a_missing_installer(tmp_path, capsys):
+    from tools import verify_release_assets
+    dist = _release_tree(tmp_path)
+    (dist / "setup" / "koeiro-v9.9.9-windows-setup.exe").unlink()
+    assert verify_release_assets.main(["--tag", "v9.9.9", "--dist", str(dist)]) == 1
+    assert "windows-setup.exe" in capsys.readouterr().err

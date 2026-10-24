@@ -30,6 +30,24 @@ def test_finish_formant_and_level_settings_fall_back():
     assert AppSettings().auto_level is False
 
 
+def test_env_passthrough_defaults_on_and_rejects_non_booleans():
+    assert AppSettings().env_passthrough is True
+    assert AppSettings.from_dict({"env_passthrough": False}).env_passthrough is False
+    assert AppSettings.from_dict({"env_passthrough": "yes"}).env_passthrough is True
+
+
+def test_the_initial_ai_thread_count_is_two():
+    """`_apply_recommended` picks 2 threads for the shipped MeanVC2 voice, so a fresh
+    install must not start one step behind it. Missing or invalid values fall back to
+    the same default, not a different one.
+    """
+    assert AppSettings().ai_threads == 2
+    assert AppSettings.from_dict({"ai_threads": True}).ai_threads == 2
+    assert AppSettings.from_dict({"ai_threads": 9}).ai_threads == 2
+    # A stored choice is still honoured.
+    assert AppSettings.from_dict({"ai_threads": 4}).ai_threads == 4
+
+
 @pytest.mark.parametrize("text", ["", "broken", "[]", "null", "42", "{", '{"gain_db": NaN}',
                                    '{"buffer_size": true}', '{"sample_rate": "48000"}'])
 def test_corrupt_or_invalid_settings(tmp_path, text):

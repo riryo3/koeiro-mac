@@ -1,0 +1,32 @@
+name: tests
+
+# オフラインのテスト一式を、pytest.ini の warnings ゲート付きで回します。`-X dev` は
+# ResourceWarning（ファイル・ソケットの閉じ忘れ）を実際に発生させ、pytest.ini がそれを
+# 失敗に変えるため、実機ログに出る前にここで落ちます。実機・モデル・AI 環境の要る
+# テストは従来どおり skip のままです（このジョブは音声デバイスを開きません）。
+#
+# ランナーは Windows です。ネイティブ DSP は追跡済みの female_dsp_x64.dll と
+# その sha256 を読むので、Linux ランナーではビルドを足さないと chain を作れません。
+# ここで回すコマンドは、緑になることをローカル（-X dev、1246 passed / 11 skipped）で
+# 確認したものと同じです。モデルや ffmpeg の無いこのランナーでは、それらを要する
+# テストが skip に落ちるだけで、失敗にはなりません。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  offline-suite:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Qt は tests/conftest.py が offscreen に落とすので、表示は要りません。
+      - run: pip install -r requirements-dev.txt
+      - name: オフラインのテスト一式（dev モードの warnings ゲート付き）
+        run: python -X dev -m pytest -q

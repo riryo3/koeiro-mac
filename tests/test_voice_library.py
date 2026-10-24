@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -33,6 +34,38 @@ def test_incomplete_and_unsafe_library_entries_are_not_live_profiles(tmp_path):
     assert discover(tmp_path) == {}
     with pytest.raises(ValueError):
         folder_for('../../meanvc2_ref20', tmp_path)
+
+
+def test_a_profile_nested_past_the_parser_limit_is_skipped(tmp_path):
+    """discover() runs while src.vc.models is imported. A voice folder holding a
+    profile.json of nothing but "[" repeated 30000 times is under the 64 KB size cap
+    but past the interpreter's recursion limit, and the RecursionError used to escape
+    the import -- the whole app refused to start instead of losing one voice.
+    """
+    good = voice_files(tmp_path, identifier='user_' + 'b' * 32)
+    broken = voice_files(tmp_path, identifier='user_' + 'c' * 32)
+    (broken / 'profile.json').write_text('[' * 30000 + ']' * 30000, 'utf-8')
+    assert (broken / 'profile.json').stat().st_size < 65536  # the size guard lets it in
+    assert set(discover(tmp_path)) == {good.name}
+
+
+def test_the_voice_panel_says_what_it_could_not_read(ai_window, monkeypatch):
+    """The panel quoted profile.json straight from the slot. An unreadable file raised,
+    Qt swallowed it, and the screen kept the previous voice's numbers.
+    """
+    app, window, backend, bridge = ai_window
+
+    def unreadable(*args, **kwargs):
+        raise RecursionError('profile.json nested past the parser limit')
+
+    monkeypatch.setattr('src.vc.voice_library.metadata', unreadable)
+    window._update_voice_info()
+    assert 'profile.json' in window.voice_hint.text()
+
+    monkeypatch.setattr('src.vc.voice_library.metadata',
+                        lambda *args, **kwargs: {'name': 'テストの声', 'reference_seconds': 7.5})
+    window._update_voice_info()
+    assert '7.5' in window.voice_hint.text()
 
 
 def test_standard_voice_is_labelled_as_the_app_voice(tmp_path):
@@ -363,4 +396,49 @@ def test_add_to_destination_passes_the_voice_identifier():
         assert arguments[arguments.index('--add-to')+1] == identifier
     finally:
         dialog.reject()
+        dialog.deleteLater()
+
+
+def test_watchdog_decision_flags_stalls_and_the_absolute_cap_separately():
+    from src.gui import voice_registration as gui
+    assert gui.watchdog_decision(100.0, 0.0, 95.0) is None
+    assert gui.watchdog_decision(100.0, 0.0, 100.0-gui.WATCHDOG_STALL_SECONDS-1.0) == 'stalled'
+    assert gui.watchdog_decision(gui.WATCHDOG_ABSOLUTE_SECONDS+1.0, 0.0,
+                                 gui.WATCHDOG_ABSOLUTE_SECONDS+1.0) == 'timeout'
+
+
+def test_registration_watchdog_only_kills_a_silent_worker(tmp_path, monkeypatch):
+    """Registration time is not the failure signal: an hour in, a worker that is still
+    printing progress must survive, and only silence past the stall window is stopped."""
+    from PySide6.QtWidgets import QApplication
+    from src.gui import voice_registration as gui
+    app = QApplication.instance() or QApplication([])
+    tools = tmp_path/'tools'
+    tools.mkdir()
+    script = ('import json,sys,time\n'
+              'print(json.dumps({"message":"登録を開始しました"}, ensure_ascii=False),flush=True)\n'
+              'time.sleep(30)\n')
+    (tools/'register_voice.py').write_text(script, 'utf-8')
+    monkeypatch.setattr(gui, 'ROOT', tmp_path)
+    monkeypatch.setattr(gui, 'data_dir', lambda: tmp_path)
+    monkeypatch.setattr(gui, 'worker_python', lambda *_: (sys.executable, os.environ.copy()))
+    dialog = gui.VoiceRegistrationDialog()
+    dialog.set_sources([str(tmp_path/'声.wav')])
+    dialog.name.setText('試験の声')
+    dialog.open()
+    dialog.on_submit()
+    try:
+        pump(app, lambda: '開始' in dialog.status.text())
+        dialog.started = time.monotonic()-3600.0
+        dialog.last_activity = time.monotonic()
+        dialog.check_resources()
+        assert dialog.process is not None and dialog.process.processId()
+        dialog.last_activity = time.monotonic()-(gui.WATCHDOG_STALL_SECONDS+5.0)
+        dialog.check_resources()
+        pump(app, lambda: dialog.process is None)
+        assert '応答' in dialog.status.text()
+    finally:
+        if dialog.process is not None:
+            dialog.reject()
+            pump(app, lambda: dialog.process is None)
         dialog.deleteLater()

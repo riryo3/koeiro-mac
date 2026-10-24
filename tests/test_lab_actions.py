@@ -41,13 +41,61 @@ def test_writing_and_reading_a_wav_round_trips():
 
 
 def test_a_reference_that_is_not_pcm_is_reported():
+    """One error type for every unreadable file, because the callers catch ValueError.
+
+    The wave module answers a float-encoded DAW export, an empty file and a renamed
+    text file with its own wave.Error/EOFError, so an `except ValueError` upstream
+    let them through; `pytest.raises(Exception)` used to accept any of that.
+    """
+    import struct
     import tempfile
+    import wave
     from pathlib import Path
     with tempfile.TemporaryDirectory() as folder:
-        target = Path(folder) / 'broken.wav'
-        target.write_bytes(b'not a wav')
-        with pytest.raises(Exception):
-            actions.load_wav(target)
+        root = Path(folder)
+
+        def expect_value_error(path):
+            try:
+                actions.load_wav(path)
+            except ValueError:
+                return
+            except Exception as error:
+                pytest.fail(f'{path.name} leaked {type(error).__name__}: {error}')
+            pytest.fail(f'{path.name} loaded but it is not usable audio')
+
+        text = root / 'text.wav'
+        text.write_bytes(b'not a wav')
+        expect_value_error(text)
+
+        empty = root / 'empty.wav'
+        empty.write_bytes(b'')
+        expect_value_error(empty)
+
+        # A 32-bit float WAV: a normal export from a DAW, and not what this reads.
+        payload = np.zeros(1200, dtype='<f4').tobytes()
+        floats = root / 'float.wav'
+        floats.write_bytes(b'RIFF' + struct.pack('<I', 20 + len(payload)) + b'WAVE'
+                           + b'fmt ' + struct.pack('<IHHIIHH', 16, 3, 1, 48000, 192000, 4, 32)
+                           + b'data' + struct.pack('<I', len(payload)) + payload)
+        expect_value_error(floats)
+
+        header_only = root / 'silent.wav'
+        with wave.open(str(header_only), 'wb') as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(48000)
+            handle.writeframes(b'')
+        expect_value_error(header_only)
+
+        # What the function does accept still round-trips, stereo folded to mono.
+        stereo = root / 'stereo.wav'
+        with wave.open(str(stereo), 'wb') as handle:
+            handle.setnchannels(2)
+            handle.setsampwidth(2)
+            handle.setframerate(48000)
+            handle.writeframes(np.full(2400, 1000, dtype='<i2').tobytes())
+        rate, samples = actions.load_wav(stereo)
+        assert rate == 48000 and samples.size == 1200
 
 
 def test_the_translation_job_writes_a_file_and_reports_what_it_measured(tmp_path):

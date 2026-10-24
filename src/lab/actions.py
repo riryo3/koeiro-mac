@@ -26,16 +26,28 @@ BLOCK_SECONDS = 0.25
 
 
 def load_wav(path, target_rate=None):
-    """Mono float32 from a PCM WAV file. Raises ValueError when it is not readable."""
-    with wave.open(str(path), 'rb') as handle:
-        if handle.getsampwidth() != 2:
-            raise ValueError(f'16-bit PCM WAV only: {Path(path).name}')
-        rate = handle.getframerate()
-        channels = handle.getnchannels()
-        raw = handle.readframes(handle.getnframes())
-        samples = np.frombuffer(raw, dtype='<i2').astype(np.float32) / 32768.0
+    """Mono float32 from a PCM WAV file. Raises ValueError when it is not readable.
+
+    The wave module answers a float-encoded export (the common DAW default), a
+    truncated download and a renamed non-WAV with its own wave.Error/EOFError, which
+    the callers here do not catch: the promise of this function is one error type.
+    """
+    try:
+        with wave.open(str(path), 'rb') as handle:
+            if handle.getsampwidth() != 2:
+                raise ValueError(f'16-bit PCM WAV only: {Path(path).name}')
+            rate = handle.getframerate()
+            channels = handle.getnchannels()
+            raw = handle.readframes(handle.getnframes())
+            samples = np.frombuffer(raw, dtype='<i2').astype(np.float32) / 32768.0
+    except (wave.Error, EOFError) as error:
+        raise ValueError(f'16-bit PCM WAV として読めません: {Path(path).name}') from error
     if channels > 1:
         samples = samples.reshape(-1, channels).mean(axis=1)
+    if not samples.size:
+        # A header-only WAV is readable but useless: cloning and diarization both
+        # need samples, and an empty array travels far before it complains.
+        raise ValueError(f'音声が入っていない WAV です: {Path(path).name}')
     if target_rate and rate != target_rate:
         index = np.linspace(0, samples.size - 1, max(1, round(samples.size * target_rate / rate)))
         samples = np.interp(index, np.arange(samples.size), samples).astype(np.float32)

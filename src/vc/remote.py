@@ -179,25 +179,36 @@ class RemoteClient:
 
 
 def serve_connection(connection, handler, timeout=DEFAULT_TIMEOUT):
-    """Answer requests on ``connection`` until the client stops asking."""
+    """Answer requests on ``connection`` until the client stops asking.
+
+    A caller may hold one connection and pause between two requests longer than
+    the timeout; that is a goodbye, not a fault, so no read error may escape this
+    thread -- it is a daemon thread and the worker has to stay usable.
+    """
     connection.settimeout(timeout)
-    while True:
+    try:
+        while True:
+            try:
+                request = json.loads(_receive(connection).decode('utf-8'))
+                body = _receive(connection)
+            except (RemoteError, OSError, ValueError):
+                return
+            if not isinstance(request, dict):
+                return
+            try:
+                header, payload = handler(request.get('action'), request, body)
+            except Exception as error:  # a bad job must not take the worker down
+                log.warning('Worker job failed: %s', error, exc_info=True)
+                header, payload = {'error': str(error)}, b''
+            try:
+                _send(connection, json.dumps(header, ensure_ascii=False).encode('utf-8'))
+                _send(connection, payload)
+            except (OSError, RemoteError):
+                return
+    finally:
+        # The accept loop hands this thread a socket nobody else owns; without this
+        # the descriptor outlives the conversation and waits on garbage collection.
         try:
-            request = json.loads(_receive(connection).decode('utf-8'))
-            body = _receive(connection)
-        except RemoteError:
-            return
-        except (ValueError, UnicodeDecodeError):
-            return
-        if not isinstance(request, dict):
-            return
-        try:
-            header, payload = handler(request.get('action'), request, body)
-        except Exception as error:  # a bad job must not take the worker down
-            log.warning('Worker job failed: %s', error, exc_info=True)
-            header, payload = {'error': str(error)}, b''
-        try:
-            _send(connection, json.dumps(header, ensure_ascii=False).encode('utf-8'))
-            _send(connection, payload)
+            connection.close()
         except OSError:
-            return
+            pass

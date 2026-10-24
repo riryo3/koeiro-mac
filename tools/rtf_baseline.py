@@ -4,6 +4,7 @@
 この段階ではアプリGUIも音声デバイスも使わず、決められた短いWAVを
 固定モデル・固定設定で往復させる。品質には手を入れず、測定だけ。
 """
+import argparse
 import json
 from pathlib import Path
 import sys
@@ -21,6 +22,12 @@ from src.processors.voice_router import VoiceRouter
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--model', default=None, help='声の id（既定: この版が同梱する声）')
+    parser.add_argument('--threads', type=int, default=2)
+    parser.add_argument('--quality', default='balanced')
+    args = parser.parse_args()
+    from src.vc.models import default_voice_id
     from tools.compare_meanvc2_continuity import require_idle_voice_worker
     require_idle_voice_worker()
 
@@ -28,9 +35,13 @@ def main():
     report_path = root / 'test-results/rtf_baseline_report.json'
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
-    model = 'meanvc2_ref20'
-    threads = 2
-    quality = 'balanced'
+    # The development reference voices this stub named are no longer in the product,
+    # so the model comes from the voices this build actually ships.
+    model = args.model or default_voice_id()
+    if model is None:
+        raise SystemExit('AI Voice に使える声が登録されていません')
+    threads = args.threads
+    quality = args.quality
 
     ai_params = AIParameters(model=model, threads=threads, quality=quality,
                              delivery='streaming', enhancer='none')

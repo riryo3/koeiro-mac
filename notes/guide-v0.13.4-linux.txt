@@ -1,0 +1,39 @@
+Koeiro v0.13.4（Linux 用）
+
+■ 入りしているもの
+  koeiro-v0.13.4-linux-app.tar.gz         凍結アプリ（Koeiro と _internal が入っています）
+  koeiro-v0.13.4-linux-ai-pack-1.tar.gz   凍結 AI ワーカー + install-ai-pack.sh + 文書
+  koeiro-v0.13.4-linux-ai-pack-2.tar.gz   モデル（MeanVC2・LavaSR・標準ボイス）
+  koeiro-v0.13.4-linux-checksums.txt      上の3ファイルの sha256（sha256sum -c 形式）
+
+■ 必要なシステムライブラリ
+  libportaudio2 libgl1 libegl1 libglib2.0-0 libxkbcommon0 libdbus-1-3 fontconfig
+  Debian 12 / Ubuntu 22.04 系で確認しています。デスクトップ用途のディストリビューションなら
+  大半が既に入っています。
+
+■ 設置の手順
+  1. アプリを展開します（書き込み可能な場所にしてください）
+       mkdir -p ~/Koeiro-linux
+       tar -xzf koeiro-v0.13.4-linux-app.tar.gz -C ~/Koeiro-linux
+     → ~/Koeiro-linux/Koeiro/Koeiro
+  2. この ZIP を解凍したフォルダ（3つの tar.gz と checksums がある場所）で
+     install-ai-pack.sh を取り出して実行します
+       tar -xzf koeiro-v0.13.4-linux-ai-pack-1.tar.gz install-ai-pack.sh
+       sh install-ai-pack.sh ~/Koeiro-linux/Koeiro
+     ハッシュ検証からモデルの展開までまとめて行います
+  3. 起動します
+       ~/Koeiro-linux/Koeiro/Koeiro
+
+■ 仕様
+  インストール後は 約1.9 GB、AI ワーカーのメモリは 約0.9 GB。
+  Debian bookworm のコンテナで、展開 → AIパックの設置 → 起動（--smoke-test）→
+  保存した音声を AI Voice で変換するところまで実測しています。
+  音声デバイス（マイク・出力）を付けた実機での通話確認は、この版では行っていません。
+
+■ 注意
+  · 変換（Original / Female DSP / AI Voice）は上記の通り動きます。声の登録は
+    AI 開発環境のある機械でやる形になります。
+  · アプリ内蔵の自動更新は GitHub のリリースページを見にいくので、ネットワークが
+    必要です。うまく更新できないときは、新しい ZIP を展開し直してください
+    （AIパックの vc_models と recordings は、インストール先のフォルダごと差し替える
+    方式でも残る作りです）。

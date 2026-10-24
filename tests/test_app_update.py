@@ -28,16 +28,45 @@ def test_parse_version_orders_releases_and_previews():
     assert app_update.parse_version("v0.11.0-preview.3") < app_update.parse_version("v0.11.0")
     assert app_update.parse_version("v0.11.0-preview.3") < app_update.parse_version("v0.11.0-preview.4")
     assert app_update.parse_version("v0.9.2-preview.1") < app_update.parse_version("v0.11.0-preview.3")
-    for bad in ("", "v1.2", "1.2.3.4", "latest", None):
+    # '²'.isdigit() is True while int('²') raises ValueError, and the callers here
+    # only turn UpdateError into something the user can read: a background update
+    # check that hit it simply stopped answering. isdecimal is the honest predicate.
+    for bad in ("", "v1.2", "1.2.3.4", "latest", None,
+                "v².0.0", "v1.².0", "v1.2.³"):
         with pytest.raises(UpdateError):
             app_update.parse_version(bad)
+    # A digit the parser can read is still a number even when it is not ASCII.
+    assert app_update.parse_version("v٢.0.0") == (2, 0, 0, 1, 0)
+    # A suffix that is not "preview.<number>" degrades to the base's first pre-release.
+    assert app_update.parse_version("v1.2.3-preview.²") == (1, 2, 3, 0, 0)
 
 
 def test_is_newer_ignores_unparsable_tags():
     assert app_update.is_newer("v9.9.9", "v0.11.0-preview.3") is True
     assert app_update.is_newer("v0.11.0-preview.3", "v0.11.0-preview.3") is False
     assert app_update.is_newer("v0.11.0", "v0.11.0-preview.3") is True
-    assert app_update.is_newer("garbage", "v0.11.0-preview.3") is False
+    for garbage in ("garbage", "v1.2.³"):
+        assert app_update.is_newer(garbage, "v0.11.0-preview.3") is False
+        assert app_update._version_matches(garbage, "v0.11.0") is False
+
+
+def test_pick_asset_ignores_asset_entries_that_are_not_objects(monkeypatch):
+    """A non-dict asset raised AttributeError inside the background update check,
+    where nothing shows it, so the check just stopped answering. Upstream junk has
+    to read as "no distribution for this OS", the same as an empty asset list.
+    """
+    for assets in ([None, 5, "x", [], {"name": "other"}], [1, 2],
+                   ["koeiro-v9.9.9-setup.exe"]):
+        release = {"tag_name": "v9.9.9", "assets": assets}
+        for kind in ("frozen", "package"):
+            assert app_update.pick_asset(release, platform="windows", kind=kind) is None
+    for broken in (5, "text", {"name": "koeiro-v9.9.9-setup.exe"}, None):
+        assert app_update.pick_asset({"tag_name": "v9.9.9", "assets": broken},
+                                     platform="windows", kind="frozen") is None
+    with monkeypatch.context() as patch:
+        patch.setattr(app_update, "_api_get",
+                      lambda *args, **kwargs: {"tag_name": "v9.9.9", "assets": [None, 5]})
+        assert app_update.check_now(timeout=1)["status"] == "error"
 
 
 def test_pick_asset_selects_this_os_package():
@@ -334,6 +363,13 @@ def test_extract_and_validate_package(tmp_path):
     (tmp_path / "broken" / "app.py").write_text("x", "utf-8")
     with pytest.raises(UpdateError):
         app_update.read_package_release(tmp_path / "broken")
+    # A release.json nested past the parser's depth limit is broken in exactly the
+    # same way; RecursionError is not a ValueError, so it must be named explicitly.
+    deep = tmp_path / "deep"
+    deep.mkdir()
+    (deep / "release.json").write_text("[" * 30000 + "]" * 30000, "utf-8")
+    with pytest.raises(UpdateError):
+        app_update.read_package_release(deep)
     with pytest.raises(UpdateError):
         app_update.extract_package(tmp_path / "missing.zip", tmp_path / "out")
 

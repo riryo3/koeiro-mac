@@ -1,15 +1,30 @@
-name: release-assets
+name: release
 
-# OS別配布物（koeiro-<tag>-windows.zip / -linux.tar.gz）をタグから作り、
-# GitHubリリースへ添付します。中身はソースツリー＋release.jsonで、
-# 初回起動時に tools/setup_release.py が環境とモデルを揃えます
-# （torch同梱は2GB制限に収まらないため採用していません。詳細はPUBLISHING.md）。
+# タグ1つから配布物の一式を作るワークフロー。以前は release-assets（ソースツリー）と
+# linux-assets（Linux 凍結ビルド）の2本に分かれ、Windows の setup.exe・AIパックと
+# BOOTH ZIP は手元作業でした。版を上げるたびに同じ手順を手で繰り返し、抜けても
+# リリースしてから気づく形だったので、1本にまとめています。
+#
+# 流れ:
+#   prepare         タグの確定・版数一致・入手案内の有無（重いジョブを始める前の関門）
+#   selftest        リリース用ツールのオフラインテスト（-X dev の warnings ゲート付き）
+#   source-*        OS別ソースツリー（koeiro-<tag>-windows.zip / -linux.tar.gz）
+#   windows-setup   凍結 GUI から setup.exe（Inno Setup）
+#   windows-ai-pack AI環境を揃え、ワーカーを凍結して ai-pack（exe + bin）まで
+#   linux-app       Linux 凍結 GUI を作り、Debian bookworm で起動確認
+#   linux-pack      Linux ワーカーを凍結して ai-pack（2分割 tar.gz）まで
+#   booth           4ジョブの成果物から BOOTH 用 ZIP 2枚（ワークフローを手で回して
+#                   booth を有効にしたときだけ。既定は手元で tools/build_booth_zip.py）
+#   release         組み上がりを検査し、GitHub リリースへ添付
 #
 # 使い方:
-#   1. src/version.py を新タグに更新して main へ push
-#   2. タグを push（例: git tag v0.12.0; git push origin v0.12.0）→ 自動で作成・添付
-#   3. 手動確認だけなら Actions → release-assets → Run workflow（dry_run のまま）
-#      ※dry_run は release へ触れず、成果物をArtifactsに残します
+#   - タグ push で自動実行し、リリースへの添付まで進む
+#   - 手元確認は Actions → release → Run workflow（tag を入れて dry_run のまま。
+#     リリースには触れず、Artifacts だけに残す）
+#   - BOOTH ZIP は既定では作らない（手元で tools/build_booth_zip.py を回す）。
+#     CI にも作らせたいときだけ workflow_dispatch の booth を有効にする
+# ビルド内容の正は各 tools/*.py。このファイルは順番と受け渡しだけを持ちます。
+# リリース本文には notes/release_notes_<tag>.md を使うので、タグに含めておくこと。
 
 on:
   push:
@@ -18,20 +33,38 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "対象タグ（例: v0.11.1）"
+        description: "対象タグ（例: v0.13.4）"
         required: true
-        default: "v0.11.1"
+        default: ""
       dry_run:
         description: "作成のみ（リリースへ添付しない）"
         type: boolean
         default: true
+      booth:
+        description: "BOOTH ZIP も作る（手元で作るなら不要）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
+env:
+  # Windows ランナーの既定コンソールは cp1252 で、日本語を print しただけで
+  # UnicodeEncodeError になる（setup_release と build_windows_setup で実測）。
+  # 標準ストリームだけ UTF-8 に固定する（open() の既定は変えない）。
+  PYTHONIOENCODING: utf-8
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  selftest:
+  prepare:
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.target.outputs.tag }}
+      booth: ${{ steps.guides.outputs.booth }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,11 +73,63 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pytest
-      - run: python -m pytest tests/test_release_tools.py -q
+      - name: 対象タグを決める
+        id: target
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ] && [ "${GITHUB_REF}" != "${GITHUB_REF#refs/tags/}" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::workflow_dispatch では tag にタグ名を入れてください"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      # 凍結ワーカーや setup.exe のビルドは数十分かかる。版数の更新忘れ
+      # （自動更新が無限に通知する）は、その前にここで落とす。
+      - name: 版数とタグの一致
+        shell: bash
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "tools")
+          from build_windows_setup import check_version_tag
+          check_version_tag(".", "${{ steps.target.outputs.tag }}")
+          PY
+      - name: BOOTH 用の入手案内がタグにあるか
+        id: guides
+        shell: bash
+        run: |
+          TAG="${{ steps.target.outputs.tag }}"
+          if [ -f "notes/guide-$TAG-windows.txt" ] && [ -f "notes/guide-$TAG-linux.txt" ]; then
+            echo "booth=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "booth=false" >> "$GITHUB_OUTPUT"
+            if [ "${{ inputs.booth }}" = "true" ]; then
+              echo "::warning::notes/guide-$TAG-windows.txt / -linux.txt がタグに無いため BOOTH ZIP は作りません"
+            fi
+          fi
 
-  build:
-    needs: selftest
+  selftest:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # 配布物に触るツールの --help は Pillow と numpy を import するものがある。
+      # 本体スイート（PySide6 まで要る）は tests ワークフロー側で回す。
+      - run: pip install pytest pillow numpy
+      # -X dev は ResourceWarning を発生させ、pytest.ini のゲートがそれを失敗にする。
+      - run: python -X dev -m pytest tests/test_release_tools.py tests/test_ai_pack.py tests/test_booth_zip.py -q
+
+  source-assets:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -58,30 +143,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: 対象タグの決定
-        id: target
-        shell: bash
-        run: |
-          if [ -n "${{ inputs.tag }}" ]; then TAG="${{ inputs.tag }}"; else TAG="${GITHUB_REF#refs/tags/}"; fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - name: アセット作成
         shell: bash
-        run: python tools/build_release_asset.py --tag "${{ steps.target.outputs.tag }}" --platform "${{ matrix.platform }}" --out dist
+        run: >-
+          python tools/build_release_asset.py --tag "${{ needs.prepare.outputs.tag }}"
+          --platform "${{ matrix.platform }}" --out dist
       - name: 内容検証
         shell: bash
         run: |
           ls -lh dist
           python - <<'EOF'
-          import json, sys, zipfile, tarfile
+          import tarfile, zipfile
           from pathlib import Path
-          tag = "${{ steps.target.outputs.tag }}"
+          tag = "${{ needs.prepare.outputs.tag }}"
           platform = "${{ matrix.platform }}"
-          asset = Path("dist") / (f"koeiro-{tag}-windows.zip" if platform == "windows" else f"koeiro-{tag}-linux.tar.gz")
+          name = (f"koeiro-{tag}-windows.zip" if platform == "windows"
+                  else f"koeiro-{tag}-linux.tar.gz")
+          asset = Path("dist") / name
           assert asset.is_file(), asset
           if platform == "windows":
               with zipfile.ZipFile(asset) as bundle:
@@ -95,14 +178,284 @@ jobs:
           EOF
       - uses: actions/upload-artifact@v4
         with:
-          name: koeiro-${{ steps.target.outputs.tag }}-${{ matrix.platform }}
-          path: dist/*
+          name: source-${{ matrix.platform }}
+          path: dist/
+          retention-days: 7
+
+  windows-setup:
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # README と同じ凍結手順。--rebuild がこの .venv の Python で
+      # write_build_root.py と PyInstaller を通す。
+      - name: GUI 用 venv
+        shell: bash
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install --quiet -r requirements.txt pyinstaller
+      # GUI の凍結に要るのは非音声ゲートのモデル3点だけ。AI 環境 (setup_release 全部) は
+      # windows-ai-pack 側の仕事なので、ここでは --nonvoice-models で軽く済ませる
+      - name: 非音声ゲートのモデル
+        shell: bash
+        run: python tools/setup_release.py --nonvoice-models
+      - name: Inno Setup（ランナーに無ければ chocolatey で）
+        shell: bash
+        run: |
+          python -c "import sys; sys.path.insert(0,'tools'); from build_windows_setup import find_iscc; print('ISCC:', find_iscc())" || {
+            choco install innosetup -y --no-progress
+            python -c "import sys; sys.path.insert(0,'tools'); from build_windows_setup import find_iscc; print('ISCC:', find_iscc())"
+          }
+      - name: setup.exe を作る
+        shell: bash
+        run: python tools/build_windows_setup.py --tag "${{ needs.prepare.outputs.tag }}" --rebuild
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup
+          path: dist/setup/
+          retention-days: 7
+
+  windows-ai-pack:
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # setup_release は LavaSR を uv + git で取ってくる。ランナーには uv が無い。
+      # 依存の sounddevice は Windows では PortAudio を wheel に同梱するので、
+      # Linux ランナーのような apt は要らない。
+      - name: uv
+        shell: bash
+        run: python -m pip install --quiet uv
+      - name: AI 環境とモデルを揃える
+        shell: bash
+        # パックは登録専用の重み（WavLM/ECAPA）を同梱しない。ECAPA は Google Drive
+        # 配布で、匿名取得が発信元によって断られる実測があるため触らない。
+        run: python tools/setup_release.py --no-registration-models
+      - name: ワーカーを凍結する
+        shell: bash
+        run: |
+          vc_models/meanvc2/.venv/Scripts/python.exe -m pip install --quiet --no-cache-dir pyinstaller
+          vc_models/meanvc2/.venv/Scripts/python.exe -m PyInstaller KoeiroWorker.spec --noconfirm --log-level WARN
+      - name: Inno Setup（ランナーに無ければ chocolatey で）
+        shell: bash
+        run: |
+          python -c "import sys; sys.path.insert(0,'tools'); from build_windows_setup import find_iscc; print('ISCC:', find_iscc())" || {
+            choco install innosetup -y --no-progress
+            python -c "import sys; sys.path.insert(0,'tools'); from build_windows_setup import find_iscc; print('ISCC:', find_iscc())"
+          }
+      - name: AIパックを作る
+        shell: bash
+        run: python tools/build_ai_pack.py --tag "${{ needs.prepare.outputs.tag }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-ai-pack
+          path: dist/ai-pack/
+          retention-days: 7
+
+  linux-app:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # ビルドも起動確認も、Docker 経路と同じ一覧（tools/build_linux_bundles.py の
+      # RUNTIME_APT）を単一の出所から入れます。リストを2箇所に写すと必ず片方が古くなる
+      - name: システムライブラリ
+        id: runtime-apt
+        run: |
+          packages=$(python -c \
+            "import sys; sys.path.insert(0, 'tools'); from build_linux_bundles import RUNTIME_APT; print(' '.join(RUNTIME_APT))")
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq $packages
+      - name: 非音声ゲートのモデル
+        run: python tools/setup_release.py --nonvoice-models
+      - name: アプリ本体バンドルを作る
+        run: >-
+          python tools/build_linux_bundles.py --tag "${{ needs.prepare.outputs.tag }}"
+          --kind app --engine local
+      # 凍結アプリを headless で起動確認。ビルドしたランナー上で走らせても、その
+      # glibc が必要になるのは自明なので意味がありません。ubuntu-24.04 で作ると
+      # GLIBC_2.38 無しの Debian 12 が起動できない実測があり、ビルドは ubuntu-22.04、
+      # 起動確認は一段古い Debian bookworm のコンテナでやります（買い手の下限）
+      - name: Debian bookworm で起動確認
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work python:3.12-bookworm bash -ec '
+            apt-get update -qq >/dev/null
+            apt-get install -y -qq ${{ steps.runtime-apt.outputs.packages }} >/dev/null
+            mkdir -p /tmp/app
+            tar -xzf /work/dist/linux/koeiro-${{ needs.prepare.outputs.tag }}-linux-app.tar.gz -C /tmp/app
+            QT_QPA_PLATFORM=offscreen /tmp/app/Koeiro/Koeiro --smoke-test'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-app
+          path: dist/linux/
+          retention-days: 7
+
+  linux-pack:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # AI 環境・MeanVC2 のリポジトリとチェックポイント・LavaSR を揃える。
+      # setup_release が作った vc_models/meanvc2/.venv の python で凍結するので、
+      # CI のワーカーは実行環境の Python バージョンが手元（3.11）とずれる点に注意。
+      # setup_release は LavaSR を uv + git で取りに来る（ubuntu ランナーに uv は無い）。
+      # setup_release の検証は sounddevice を import するので libportaudio も要る
+      # （PortAudio library not found で落ちた実測）
+      - name: uv と PortAudio を入れる
+        run: |
+          python -m pip install --quiet uv
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libportaudio2
+      - name: AI 環境とモデルを揃える
+        # パックは登録専用の重み（WavLM/ECAPA）を同梱しない。ECAPA は Google Drive
+        # 配布で、匿名取得が発信元によって断られる実測があるため触らない。
+        run: python tools/setup_release.py --no-registration-models
+      - name: ワーカーを凍結する
+        run: >-
+          vc_models/meanvc2/.venv/bin/python -m pip install --no-cache-dir -q pyinstaller
+          && vc_models/meanvc2/.venv/bin/python -m PyInstaller KoeiroWorker.spec
+          --noconfirm --log-level WARN
+      - name: AI ボイスパックを作る
+        run: >-
+          python tools/build_linux_bundles.py --tag "${{ needs.prepare.outputs.tag }}"
+          --kind pack --worker-dist dist/KoeiroWorker --engine local
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-ai-pack
+          path: dist/linux/
+          retention-days: 7
+
+  booth:
+    needs: [prepare, windows-setup, windows-ai-pack, linux-app, linux-pack]
+    # BOOTH ZIP は手元で作るのが既定（workflow_dispatch の booth を有効にしたときだけ動く）。
+    # 入手案内は「実測した範囲のことだけ」書く文書なので、ツールでは作れない。
+    if: ${{ inputs.booth == true && needs.prepare.outputs.booth == 'true' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-setup
+          path: dist/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-ai-pack
+          path: dist/ai-pack
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-app
+          path: dist/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-ai-pack
+          path: dist/linux
+      # app ジョブと pack ジョブはそれぞれ別名の checksums を書く（同名だと後発が
+      # app の行を消す）。更新と install-ai-pack.sh が読む1枚にここで統合する。
+      - name: Linux の checksums を統合
+        run: >-
+          python tools/build_linux_bundles.py --tag "${{ needs.prepare.outputs.tag }}"
+          --kind checksums --engine local
+      - name: BOOTH 用 ZIP 2枚
+        run: >-
+          python tools/build_booth_zip.py --tag "${{ needs.prepare.outputs.tag }}"
+          --guide-windows notes/guide-${{ needs.prepare.outputs.tag }}-windows.txt
+          --guide-linux notes/guide-${{ needs.prepare.outputs.tag }}-linux.txt
+      - name: 出来た ZIP の点検
+        run: python tools/build_booth_zip.py --tag "${{ needs.prepare.outputs.tag }}" --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: booth
+          path: dist/booth/
+          retention-days: 7
+
+  release:
+    needs: [prepare, source-assets, windows-setup, windows-ai-pack, linux-app, linux-pack]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-windows
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-linux
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-setup
+          path: dist/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-ai-pack
+          path: dist/ai-pack
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-app
+          path: dist/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-ai-pack
+          path: dist/linux
+      - name: Linux の checksums を統合
+        run: >-
+          python tools/build_linux_bundles.py --tag "${{ needs.prepare.outputs.tag }}"
+          --kind checksums --engine local
+      # 検査は dry_run でも回す。止めるのは添付だけ。
+      - name: 配布物の検査（一式の有無・sha256・更新の選別）
+        run: python tools/verify_release_assets.py --tag "${{ needs.prepare.outputs.tag }}"
       - name: リリースへ添付
         if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.target.outputs.tag }}"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "自動作成。下書きを編集して公開してください。"
-          gh release upload "$TAG" dist/* --clobber
+          TAG="${{ needs.prepare.outputs.tag }}"
+          NOTES="notes/release_notes_${TAG}.md"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if [ -f "$NOTES" ]; then
+              gh release create "$TAG" --title "$TAG" --notes-file "$NOTES"
+            else
+              gh release create "$TAG" --title "$TAG" --notes "自動作成。下書きを編集して公開してください。"
+            fi
+          fi
+          gh release upload "$TAG" \
+            "dist/koeiro-$TAG-windows.zip" "dist/koeiro-$TAG-linux.tar.gz" \
+            dist/setup/* dist/ai-pack/* dist/linux/* --clobber

@@ -19,6 +19,7 @@ The sizes, not a single large image, are what let a dock pick a crisp icon inste
 of scaling one down. Discord's activity image is unrelated: Discord fetches that
 from the URL in src/presence/activity.py, so it is identical on Windows and Linux.
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -52,6 +53,8 @@ StartupWMClass=Koeiro
 
 
 def main():
+    # --help must not regenerate tracked assets: parse first, write after.
+    argparse.ArgumentParser(description=__doc__).parse_args()
     icon = Image.open(SOURCE).convert("RGBA")
     # One icon name for the running app and the desktop entry: the window icon is
     # loaded from assets/icon.png, and the dock matches this entry by that name.
