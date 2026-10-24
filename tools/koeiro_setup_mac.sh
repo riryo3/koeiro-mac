@@ -35,11 +35,21 @@ uv pip install --python vc_models/meanvc2/.venv/bin/python -r "$LOCK" torchvisio
 rm -f "$LOCK"
 
 say "5/6 AI モデルの取得（約 2GB。時間がかかります）"
+# The ECAPA file (voice registration only) comes from Google Drive, which sometimes answers
+# "Quota exceeded". Conversion with the bundled voice does not need it, so a miss there is a
+# warning; any other missing model still stops the setup. Rerun this script to retry.
 .venv/bin/python -c "
 import sys; sys.path.insert(0, 'tools')
 import setup_release as s
 from pathlib import Path
-s.fetch_models(Path('.').resolve(), False)
+root = Path('.').resolve()
+try:
+    s.fetch_models(root, False)
+except s.SetupError as error:
+    print()
+    print('注意: 声の登録に使うモデルを、まだ取得できていません（変換には影響しません）。')
+    print('      後で、もう一度 tools/koeiro_setup_mac.sh を実行すると、取り直せます。')
+    s.fetch_models(root, False, with_registration=False)
 "
 .venv/bin/python tools/install_lavasr.py
 
