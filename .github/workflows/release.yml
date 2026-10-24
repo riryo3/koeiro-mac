@@ -30,6 +30,8 @@ on:
   push:
     tags:
       - "v*"
+      # Mac app releases of this fork (v0.13.5-mac1 ...) are not built by this workflow.
+      - "!v*-mac*"
   workflow_dispatch:
     inputs:
       tag:
