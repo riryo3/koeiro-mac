@@ -77,6 +77,16 @@ def rescan_devices(backend=sd):
     return enumerate_devices(backend)
 
 
+def _input_rank(device):
+    """Lower is better: built-in microphones, then the rest, then external / headphone-jack ports."""
+    name = str(device.name).lower()
+    if any(hint in name for hint in ("macbook", "built-in", "内蔵", "imac", "mac mini", "mac studio")):
+        return 0
+    if any(hint in name for hint in ("external", "外部", "headset", "ヘッドセット")):
+        return 2
+    return 1
+
+
 def choose_device(devices, kind, saved=None, preferred_api=None):
     candidates = [d for d in devices if getattr(d, f"max_{kind}_channels") > 0]
     if saved:
@@ -97,6 +107,9 @@ def choose_device(devices, kind, saved=None, preferred_api=None):
         # A microphone, never a software cable: with BlackHole set as the system input, taking the
         # default would read Koeiro's own output back in and the voice would loop forever.
         real = [d for d in pool if not is_virtual(d, "input")]
+        # The machine's own microphone first: a headphone-jack mic port ("外部マイク") mostly hears the
+        # headphones, and playing the converted voice into it makes the voice loop.
+        real.sort(key=_input_rank)   # stable: equal ranks keep the system's order
         pool = real or pool
     wasapi = [d for d in pool if "wasapi" in d.host_api.lower()]
     pool = wasapi or pool
