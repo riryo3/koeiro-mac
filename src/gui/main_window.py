@@ -1153,22 +1153,20 @@ class MainWindow(QMainWindow):
         self.action_restart_ai.triggered.connect(self._restart_ai)
         control.addAction(self.action_restart_ai)
         control.addSeparator()
-        # 変換モード: the same choice as the pull-down, with its shortcuts.
+        # 変換モード: the same choice as the pull-down. No keys on purpose: one stray key must never switch to the raw voice.
         from PySide6.QtGui import QActionGroup
         mode_group = QActionGroup(self)
         self.mode_actions = {}
-        for key, label, shortcut in (('original', 'Original / 変換なし', 'Ctrl+1'),
-                                     ('female_dsp', 'Female DSP / 軽い加工', 'Ctrl+2'),
-                                     ('ai_voice', 'AI Voice / 声の変換', 'Ctrl+3')):
+        for key, label in (('original', 'Original / 変換なし'),
+                           ('female_dsp', 'Female DSP / 軽い加工'),
+                           ('ai_voice', 'AI Voice / 声の変換')):
             action = QAction(label, self)
             action.setCheckable(True)
-            action.setShortcut(shortcut)
             action.triggered.connect(lambda _checked=False, mode_key=key: self._select_mode(mode_key))
             mode_group.addAction(action)
             control.addAction(action)
             self.mode_actions[key] = action
         self.action_ab = QAction('変換なしと切り替えて聞き比べる', self)
-        self.action_ab.setShortcut('Ctrl+D')
         self.action_ab.triggered.connect(self._ab_toggle)
         control.addAction(self.action_ab)
         self.voice_menu = menu_bar.addMenu('声')
@@ -1203,8 +1201,7 @@ class MainWindow(QMainWindow):
             corner_menu.addAction(action)
             action.triggered.connect(lambda _checked=False, k=key: self._set_compact_corner(k))
             self.corner_actions[key] = action
-        # ⌘1-⌘4 (corners) and ⌘0 (the free position) only work in the small window: ⌘1-⌘3 are the voice modes
-        # elsewhere, and those are switched off while the small window is on (see _set_compact).
+        # ⌘1-⌘4 (corners) and ⌘0 (the free position) only work in the small window.
         from PySide6.QtGui import QKeySequence, QShortcut
         self._corner_shortcuts = []
         for number, key in ((1, 'top_left'), (2, 'top_right'), (3, 'bottom_left'), (4, 'bottom_right'), (0, 'free')):
@@ -1592,7 +1589,7 @@ class MainWindow(QMainWindow):
             self._fit_compact()
             self._mode_actions_enabled = {key: action.isEnabled() for key, action in self.mode_actions.items()}
             for action in self.mode_actions.values():
-                action.setEnabled(False)   # a stray ⌘1 must not switch to the unchanged voice
+                action.setEnabled(False)   # the menu must not switch to the unchanged voice from the small window
             for shortcut in self._corner_shortcuts:
                 shortcut.setEnabled(True)
             self._place_compact()
@@ -1827,7 +1824,6 @@ class MainWindow(QMainWindow):
             return
         menu.clear()
         show = QAction('お気に入りを表示（もう一度で、すべてに戻る）', self)
-        show.setShortcut('F')
         show.triggered.connect(self._show_favorites)
         menu.addAction(show)
         stars = QAction('お気に入りに入れる／外す: 声のカードの ☆ をクリック', self)
@@ -1843,10 +1839,9 @@ class MainWindow(QMainWindow):
             slot = '1234567890'[position]
             name = VOICE_PROFILES[key].get('name', key)
             action = QAction(f'{slot}　{name}', self)
-            action.setShortcut(slot)
             action.triggered.connect(lambda _checked=False, voice=key: self._select_favorite(voice))
             menu.addAction(action)
-        note = QAction('キー 1〜9・0 の切り替えは、停止中だけ使えます', self)
+        note = QAction('声の切り替えは、停止中だけ使えます', self)
         note.setEnabled(False)
         menu.addSeparator()
         menu.addAction(note)
@@ -4655,17 +4650,12 @@ class MainWindow(QMainWindow):
             self.controller.set_env_passthrough(self.env_passthrough_toggle.isChecked())
 
     def _build_hotkeys(self):
-        """In-app shortcuts for instant route switching.
-
-        These are *application* shortcuts: they fire while any Koeiro window has focus,
-        not system-wide. The app deliberately installs no OS keyboard hook, so a
-        keystroke pressed while a game or Discord has focus is not captured. Ctrl+1/2/3
-        pick a route outright; Ctrl+D flips between Original and the last real route,
-        which is the A/B listen that a voice change actually needs.
+        """No route-switching keys. The voice mode is chosen from the pull-down or the 操作 menu only,
+        so no stray key can switch to the unchanged voice while a call or a stream is running.
         """
         from PySide6.QtGui import QKeySequence, QShortcut
         self._ab_last = 'ai_voice'
-        bindings = (('Ctrl+F', self._focus_drawer_search),)
+        bindings = ()   # none: the old Ctrl+F search jump and the route keys are gone on purpose
         self.mode.currentIndexChanged.connect(self._sync_mode_actions)
         self._sync_mode_actions()
         self.hotkeys = {}
