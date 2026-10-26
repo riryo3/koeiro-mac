@@ -3292,12 +3292,17 @@ class MainWindow(QMainWindow):
             self.ai_threads.addItem(str(count), count)
         self.ai_threads.setCurrentIndex(self.ai_threads.findData(self.settings.ai_threads))
         self.ai_threads.setToolTip('AIの並列数。2が速いPCが多く、4が速い場合もあります。')
+        self.ai_lookahead = QComboBox()
+        for label, hops in [('標準・自然（約2.5秒）', 10), ('バランス（約1.7秒）', 5), ('速い（約1.2秒）', 2)]:
+            self.ai_lookahead.addItem(label, hops)
+        self.ai_lookahead.setCurrentIndex(max(0, self.ai_lookahead.findData(self.settings.ai_repair_lookahead)))
+        self.ai_lookahead.setToolTip('声を出してから変換後の声が出るまでの遅れ（目安）と、言い終わりの自然さの調整です。速いほど、言い終わりの抑揚の補正が弱くなります。変えると、AIを読み込み直します。')
         self.ai_device = QComboBox()
         for label, key in [('自動（CPUで測定）', 'auto'), ('CPU', 'cpu'), ('GPU（CUDA・実測済み）', 'cuda')]:
             self.ai_device.addItem(label, key)
         self.ai_device.setCurrentIndex(self.ai_device.findData(self.settings.ai_device))
         self.ai_device.setToolTip('推論の実行場所。同梱の声はCPUで測定しました。「自動」もCPUを選びます。GPU（CUDA）は Kaggle の Tesla T4 で計測済み（CPUと2.0倍速、差は-76dB）で、選んだときだけ試します。聴感の確認はまだです。')
-        for name, combo in [('処理構成', self.ai_quality), ('CPU threads', self.ai_threads), ('実行デバイス', self.ai_device)]:
+        for name, combo in [('処理構成', self.ai_quality), ('CPU threads', self.ai_threads), ('遅延と自然さ（先読み）', self.ai_lookahead), ('実行デバイス', self.ai_device)]:
             details.addWidget(self._labelled_row(name, combo))
         self.ai_brightness, self.ai_brightness_label = self._slider(details, 'AI Brightness', 0, 100, round(self.settings.ai_brightness))
         self.ai_low_cut = QCheckBox('Low Cut · 90 Hz')
@@ -3361,7 +3366,7 @@ class MainWindow(QMainWindow):
         note = QLabel('声の追加・切り替えは停止中に行います。\n新しい声の似具合は録音内容によって変わります。')
         note.setWordWrap(True)
         column.addWidget(note)
-        for combo in (self.ai_quality, self.ai_threads, self.ai_device):
+        for combo in (self.ai_quality, self.ai_threads, self.ai_lookahead, self.ai_device):
             combo.currentIndexChanged.connect(self._ai_structure_changed)
         self.ai_brightness.valueChanged.connect(self._ai_fx_changed)
         for checkbox in (self.ai_low_cut, self.ai_limiter, self.ai_post_fx):
@@ -3383,7 +3388,7 @@ class MainWindow(QMainWindow):
         self._ai_fx_changed()
         self._update_voice_info()
         if not self.router:
-            for widget in (self.ai_model, self.ai_quality, self.ai_threads, self.ai_device, self.ai_brightness, self.ai_low_cut, self.ai_limiter, self.ai_post_fx):
+            for widget in (self.ai_model, self.ai_quality, self.ai_threads, self.ai_lookahead, self.ai_device, self.ai_brightness, self.ai_low_cut, self.ai_limiter, self.ai_post_fx):
                 widget.setEnabled(False)
 
     def _build_diagnostics_section(self, layout):
@@ -3620,6 +3625,7 @@ class MainWindow(QMainWindow):
         if model is None:
             raise ValueError('利用可能なAI音声がありません。右の声リストから声を登録してください。')
         return AIParameters(model=model,quality=self.ai_quality.currentData(), threads=self.ai_threads.currentData(),
+                            repair_lookahead=self.ai_lookahead.currentData(),
                             device=self.ai_device.currentData(),
                             brightness=self.ai_brightness.value(), low_cut=self.ai_low_cut.isChecked(),
                             limiter=self.ai_limiter.isChecked(), post_fx=self.ai_post_fx.isChecked(),
@@ -3932,6 +3938,7 @@ class MainWindow(QMainWindow):
         self._update_delivery_note()
         self.finish_phrase.setVisible(mean)
         self.ai_threads.setVisible(mean)
+        self.ai_lookahead.setVisible(mean)
         self.ai_device.setVisible(mean)
         # The pre-roll text follows the model: a MeanVC2 note left behind after moving
         # to another voice would state a pre-roll that is not being used.
@@ -3951,9 +3958,12 @@ class MainWindow(QMainWindow):
             from src.vc.models import profile
             selected=profile(self.ai_model.currentData())
             repair=selected.get('phrase_repair',False)
+            wait_ms=selected.get('extra_delay_ms',0)
+            if repair and getattr(self,'ai_lookahead',None) is not None and self.ai_delivery.currentData()=='streaming':
+                wait_ms=self.ai_lookahead.currentData()*160
             description=('強弱のみ補完 β。ピッチの再編集はOFF。' if selected.get('repair_mode') == 'energy' else
                          '強弱・母音の微小な抑揚補完 β。Text-Aware・全体Pitch・EQはOFF。' if repair else 'Prosody・Text-Aware・Pitch・EQはOFF。')
-            self.ai_performance.setText(f"Reference / Speaker Embedding固定。{description}\nモデルbuffer {selected['model_buffer_ms']}ms＋pre-roll {selected.get('startup_chunks',6)*160}ms＋補完待ち {selected.get('extra_delay_ms',0)}ms、特徴補間遅延 {selected['grid_delay_ms']}ms（実測遅延ではありません）。")
+            self.ai_performance.setText(f"Reference / Speaker Embedding固定。{description}\nモデルbuffer {selected['model_buffer_ms']}ms＋pre-roll {selected.get('startup_chunks',6)*160}ms＋補完待ち {wait_ms}ms、特徴補間遅延 {selected['grid_delay_ms']}ms（実測遅延ではありません）。")
 
     def _update_delivery_note(self):
         """Explain the selected delivery route, with its measured cost and its limits."""
@@ -4768,6 +4778,7 @@ class MainWindow(QMainWindow):
         self.finish_phrase.setEnabled(not stopped and mean and self.router is not None and self._utterance_active() and not self._closing)
         self._update_control_visibility()
         self.ai_threads.setEnabled(stopped and not self._closing and mean)
+        self.ai_lookahead.setEnabled(stopped and not self._closing and mean)
         self.ai_device.setEnabled(stopped and not self._closing and mean)
         self.ai_wait.setEnabled(stopped and not self._closing and not mean)
         self._sync_reset_buttons()
@@ -5229,7 +5240,7 @@ class MainWindow(QMainWindow):
             pass
         if ai is not None:
             self.settings = replace(self.settings, voice_mode=self.mode.currentData(), ai_model=ai.model,
-            ai_quality=ai.quality, ai_threads=ai.threads, ai_device=ai.device, ai_brightness=ai.brightness,
+            ai_quality=ai.quality, ai_threads=ai.threads, ai_repair_lookahead=ai.repair_lookahead, ai_device=ai.device, ai_brightness=ai.brightness,
             ai_low_cut=ai.low_cut, ai_limiter=ai.limiter, ai_post_fx=ai.post_fx,
             ai_output_wait_ms=ai.output_wait_ms,ai_crossfade_ms=ai.crossfade_ms,ai_pitch=ai.pitch,
             ai_delivery=ai.delivery,ai_enhancer=ai.enhancer,ai_lavasr_denoise=ai.lavasr_denoise,

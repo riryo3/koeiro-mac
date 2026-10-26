@@ -100,6 +100,7 @@ class AppSettings:
     # The recommended set already picks 2 threads for the shipped MeanVC2 voice, so
     # the initial value matches it instead of starting one step behind.
     ai_threads: int = 2
+    ai_repair_lookahead: int = 10
     ai_device: str = "auto"
     ai_brightness: float = 50.0
     ai_low_cut: bool = True
@@ -142,6 +143,7 @@ class AppSettings:
 
     def ai_parameters(self):
         return AIParameters(quality=self.ai_quality, threads=self.ai_threads, device=self.ai_device, model=self.ai_model,
+                            repair_lookahead=self.ai_repair_lookahead,
                             brightness=self.ai_brightness, low_cut=self.ai_low_cut,
                             limiter=self.ai_limiter, post_fx=self.ai_post_fx,
                             output_wait_ms=self.ai_output_wait_ms,crossfade_ms=self.ai_crossfade_ms,pitch=self.ai_pitch,
@@ -247,6 +249,8 @@ class AppSettings:
             values['ai_model'] = default_voice_id() or next(iter(VOICE_PROFILES), None)
         threads = data.get('ai_threads')
         values['ai_threads'] = threads if type(threads) is int and 1 <= threads <= 4 else defaults.ai_threads
+        lookahead = data.get('ai_repair_lookahead')
+        values['ai_repair_lookahead'] = lookahead if type(lookahead) is int and 1 <= lookahead <= 10 else defaults.ai_repair_lookahead
         device = data.get('ai_device')
         values['ai_device'] = device if isinstance(device, str) and device in DEVICES else defaults.ai_device
         values['ai_brightness'] = _number(data.get('ai_brightness'), 50.0, 0, 100)

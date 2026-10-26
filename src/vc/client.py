@@ -107,6 +107,7 @@ class ServiceClient:
             '--device', self.parameters.device,
             '--model',self.parameters.model,'--delivery',self.parameters.delivery,'--enhancer',self.parameters.enhancer,
             '--experiment',self.parameters.experiment,
+            '--repair-lookahead',str(self.parameters.repair_lookahead),
             '--tune-sib-db',str(self.parameters.tune_sib_db),
             '--tune-cons-db',str(self.parameters.tune_cons_db),
             '--tune-caps',str(self.parameters.tune_caps),

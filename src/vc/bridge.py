@@ -127,13 +127,13 @@ class AIBridge:
         structural = (
             parameters.quality, parameters.threads, parameters.model, parameters.queue_chunks,
             parameters.delivery, parameters.enhancer, parameters.lavasr_denoise, parameters.experiment,
-            parameters.device, parameters.tune_sib_db, parameters.tune_cons_db, parameters.tune_caps,
+            parameters.repair_lookahead, parameters.device, parameters.tune_sib_db, parameters.tune_cons_db, parameters.tune_caps,
             parameters.tune_floor_db, parameters.tune_excess_db, parameters.tune_mid, parameters.tune_match,
             parameters.tune_ptrans, parameters.tune_pcap, parameters.tune_combined, parameters.tune_level_db,
         ) != (
             self.parameters.quality, self.parameters.threads, self.parameters.model, self.parameters.queue_chunks,
             self.parameters.delivery, self.parameters.enhancer, self.parameters.lavasr_denoise, self.parameters.experiment,
-            self.parameters.device, self.parameters.tune_sib_db, self.parameters.tune_cons_db, self.parameters.tune_caps,
+            self.parameters.repair_lookahead, self.parameters.device, self.parameters.tune_sib_db, self.parameters.tune_cons_db, self.parameters.tune_caps,
             self.parameters.tune_floor_db, self.parameters.tune_excess_db, self.parameters.tune_mid, self.parameters.tune_match,
             self.parameters.tune_ptrans, self.parameters.tune_pcap, self.parameters.tune_combined, self.parameters.tune_level_db,
         )

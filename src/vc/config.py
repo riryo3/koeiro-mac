@@ -60,6 +60,9 @@ class AIParameters:
     # Listening-comparison variant. Only the utterance+LavaSR route honours it; any
     # other combination falls back to 'none' rather than raising on a restored setting.
     experiment: str = 'none'
+    # Phrase-repair lookahead in 160 ms hops (MeanVC2 streaming): 10 is the approved condition,
+    # fewer hops cut latency by 160 ms each at some cost to the repair of phrase endings.
+    repair_lookahead: int = 10
     # Voice tuning sliders. Only the natural comparison route honours them; the
     # shipped routes and the all-in comparison ignore them entirely. Defaults
     # reproduce the validated natural recipe exactly.
@@ -111,6 +114,8 @@ class AIParameters:
         # rejected rather than being silently replaced by the neutral value.
         if type(self.threads) is not int or not 1 <= self.threads <= 4:
             raise ValueError('AI CPU threads must be 1..4')
+        if type(self.repair_lookahead) is not int or not 1 <= self.repair_lookahead <= 10:
+            raise ValueError('AI repair lookahead must be 1..10')
         if type(self.brightness) not in (int, float) or not math.isfinite(self.brightness) or not 0 <= self.brightness <= 100:
             raise ValueError('AI brightness must be 0..100')
         if any(type(v) is not bool for v in (self.low_cut, self.limiter, self.post_fx, self.lavasr_denoise,

@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--enhancer',choices=('none','flashsr','mossformer','voicefixer','lavasr'),default='none')
     # Listening-comparison variant. Only the utterance+LavaSR route honours it.
     parser.add_argument('--experiment',choices=EXPERIMENTS,default='none')
+    parser.add_argument('--repair-lookahead',type=int,choices=range(1,11),default=10)
     # Optional LavaSR upstream denoise. Off by default: no measured benefit on this
     # material, and it costs time inside an already RTF-sensitive path.
     parser.add_argument('--lavasr-denoise',action='store_true')
@@ -174,7 +175,12 @@ def run(scheduling,args):
             raise ValueError('Unsupported AI backend')
         backend.load(folder)
         if hasattr(backend,'select_profile'):
-            backend.select_profile(selected)
+            if selected.get('phrase_repair') and getattr(args,'delivery','streaming') == 'streaming' \
+                    and args.repair_lookahead != 10:
+                # The streaming route only; the utterance route keeps its own lookahead.
+                backend.select_profile(dict(selected, repair_lookahead_hops=args.repair_lookahead))
+            else:
+                backend.select_profile(selected)
             experiment = getattr(args,'experiment','none')
             if experiment == 'all' and runtime.get('backend') == 'meanvc2':
                 # Integrated comparison: 3-block grouping with energy-only repair
