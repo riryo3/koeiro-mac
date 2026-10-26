@@ -21,7 +21,7 @@
 
 > 🍎 **非公式の Mac（Apple Silicon）版**: 本家 [heynegix/koeiro](https://github.com/heynegix/koeiro)（MIT License、v0.13.5 ベース）のフォークです。本家の作者とは別の人が、個人で作っている非公式の対応です。名前・ロゴ・標準ボイスは、本家の作者の許可を得て使っています。
 >
-> - **ダウンロード（アプリ）:** [Releases の Koeiro-mac-0.13.5.zip](https://github.com/riryo3/koeiro-mac/releases/tag/v0.13.5-mac3) を解凍して、右クリック → 開く。初回だけ、約 2GB の準備があります（試作版）。
+> - **ダウンロード（アプリ）:** [Releases の Koeiro-mac-0.13.5.zip](https://github.com/riryo3/koeiro-mac/releases/tag/v0.13.5-mac4) を解凍して、右クリック → 開く。初回だけ、約 2GB の準備があります（試作版）。
 > - 使い方: [USAGE_MAC.md](USAGE_MAC.md) ／ 入れ方と変更点: [MAC.md](MAC.md) ／ ブラウザ通話に使う（Chrome 推奨）: [AUDIO_MAC.md](AUDIO_MAC.md)
 > - 本家への Mac 対応の提案は、[PR #4](https://github.com/heynegix/koeiro/pull/4) で進んでいます（このフォークとは別です）。
 > - **テストについて:** 画面を3列のレイアウトに作り替えたため、本家の画面（右から重なる設定パネル）を前提にした自動テスト（`tests/test_ui_flow.py` など）の一部は、このフォークでは通りません。画面そのものは、動作を確認しています。
