@@ -648,7 +648,7 @@ class MainWindow(QMainWindow):
         output_note.setWordWrap(True)
         output_column.addWidget(output_note)
         self.output_device = QComboBox()
-        self.output_device.setMinimumWidth(240)
+        self.output_device.setMinimumWidth(150)
         self.output_device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.output_device.setMinimumContentsLength(12)
         self.output_device.setToolTip(f'変換後の音が出る場所。Discordなどに流すときは{virtual_hint}を選びます。')
@@ -684,7 +684,7 @@ class MainWindow(QMainWindow):
         self._gate_changed(self.gate.value())
         # Optional spectral noise reduction, applied live like the gate. It is off by
         # default because it reshapes the voice; the strength is a user choice.
-        self.low_cut_toggle = QCheckBox('ローカット（低い音を切る・100Hz以下）')
+        self.low_cut_toggle = QCheckBox('ローカット（100Hz以下）')
         self.low_cut_toggle.setChecked(self.settings.input_low_cut)
         self.low_cut_toggle.setToolTip('机の振動・息・「ぱ」「ぶ」などの低い音を、AIに渡す前に切ります。\n'
                                        '変換後に「ドーン」と低い音が出るときに使います。声（150Hz以上）はほぼ変わりません。\n'
@@ -716,9 +716,9 @@ class MainWindow(QMainWindow):
         # (claps, keyboard, knocks) reach the listener raw instead of being
         # re-synthesised. The streaming route aligns a raw copy in the callback;
         # the utterance route splices gated raw spans into each converted piece.
-        self.env_passthrough_toggle = QCheckBox('環境音をそのまま通す（拍手・キーボードなど）')
+        self.env_passthrough_toggle = QCheckBox('環境音をそのまま通す')
         self.env_passthrough_toggle.setChecked(self.settings.env_passthrough)
-        self.env_passthrough_toggle.setToolTip('拍手・キーボード・物音などの一過性の環境音を、変換せずそのまま出力します。\n'
+        self.env_passthrough_toggle.setToolTip('拍手・キーボード・物音などの一過性の環境音（拍手・キーボードなど）を、変換せずそのまま出力します。\n'
                                                '咳・鼻すすり・くしゃみなど声まわりの音は環境音とみなさず変換します。\n'
                                                '声が戻るとすぐに通常の変換へ戻ります。既定はON。\n'
                                                'AI Voice の逐次変換・一括変換で働きます。')
@@ -949,7 +949,7 @@ class MainWindow(QMainWindow):
             slider.reset_button.setEnabled(slider.value() != slider.default_value)
             self._slider_defaults.append(slider)
         # One button for all of them, at the top of the 変換 column.
-        reset_all = QPushButton('すべてのスライダーをおすすめ値にする')
+        reset_all = QPushButton('すべておすすめ値にする')
         reset_all.setToolTip('音量・Noise Gate・モニター音量・AI調整などのスライダーを、'
                              'アプリのおすすめ値にします。')
         reset_all.clicked.connect(self._reset_all_sliders)
@@ -2963,7 +2963,8 @@ class MainWindow(QMainWindow):
         column.addWidget(label)
         self.route_box = QWidget()
         self.route_box.setObjectName('segmentBox')
-        route_layout = QHBoxLayout(self.route_box)
+        from PySide6.QtWidgets import QGridLayout
+        route_layout = QGridLayout(self.route_box)   # two by two: four in a row needed more than a column's width
         route_layout.setContentsMargins(3, 3, 3, 3)
         route_layout.setSpacing(2)
         self.route_group = QButtonGroup(self)
@@ -2980,7 +2981,8 @@ class MainWindow(QMainWindow):
             button.setMinimumHeight(40)
             button.clicked.connect(lambda _checked=False, name=key: self._select_route(name))
             self.route_group.addButton(button)
-            route_layout.addWidget(button)
+            index = len(self.route_buttons)
+            route_layout.addWidget(button, index // 2, index % 2)
             self.route_buttons[key] = button
         column.addWidget(self.route_box)
         self.delivery_note = QLabel('')
@@ -2999,7 +3001,7 @@ class MainWindow(QMainWindow):
         card = QFrame()
         card.setObjectName('stepCard')
         column = QVBoxLayout(card)
-        column.setContentsMargins(18, 14, 18, 16)
+        column.setContentsMargins(12, 14, 12, 16)
         column.setSpacing(10)
         heading = QLabel(title)
         heading.setObjectName('stepTitle')
@@ -3042,7 +3044,7 @@ class MainWindow(QMainWindow):
         self.finish_toggle.toggled.connect(self._finish_changed)
         column.addWidget(self.finish_toggle)
         self._finish_changed()
-        self.onset_fade_toggle = QCheckBox('声の出始めをなめらかに（20ms）')
+        self.onset_fade_toggle = QCheckBox('声の出始めをなめらかに')
         self.onset_fade_toggle.setChecked(self.settings.output_onset_fade)
         self.onset_fade_toggle.setToolTip('無音から声が出始める瞬間に、20msのフェードインを入れて、クリック音を丸めます。\n'
                                           '語頭が少し柔らかくなります。変換後のみ。停止中でも変換中でも切替できます。')
@@ -3064,14 +3066,14 @@ class MainWindow(QMainWindow):
         self.out_low_cut_toggle.toggled.connect(self._out_low_cut_changed)
         column.addWidget(self.out_low_cut_toggle)
         self._out_low_cut_changed()
-        self.out_high_cut_toggle = QCheckBox('出力の高域カット（高い音を切る）')
+        self.out_high_cut_toggle = QCheckBox('出力の高域カット')
         self.out_high_cut_toggle.setChecked(self.settings.output_high_cut)
         self.out_high_cut_toggle.setToolTip('AIが作った高い音（「シャッ」という息の音など）を、スライダーの周波数より上で切ります。\n'
                                             '下げるほど強く切れますが、声がこもります。変換後のみ。既定はOFF。')
         self.out_high_cut_toggle.toggled.connect(self._out_high_cut_changed)
         column.addWidget(self.out_high_cut_toggle)
         self.out_high_cut_hz, self.out_high_cut_label = self._slider(
-            column, '高域カットの周波数（これより上を切る）', 20, 120, round(self.settings.output_high_cut_hz / 100))
+            column, '高域カットの周波数', 20, 120, round(self.settings.output_high_cut_hz / 100))
         self.out_high_cut_hz.valueChanged.connect(self._out_high_cut_changed)
         self._out_high_cut_changed()
 
@@ -3142,7 +3144,7 @@ class MainWindow(QMainWindow):
         """Live: armed per block on the AI route, so the stream never needs a restart."""
         if not hasattr(self, 'out_low_cut_toggle'):
             return
-        self.out_low_cut_toggle.setText(f'出力のローカット（{self._out_low_cut_hz:.0f}Hz以下を切る）')
+        self.out_low_cut_toggle.setText(f'出力のローカット（{self._out_low_cut_hz:.0f}Hz以下）')
         self._sync_band_meter()
         if not self._closing:
             self.controller.set_output_low_cut(self.out_low_cut_toggle.isChecked(), self._out_low_cut_hz)
@@ -3169,7 +3171,7 @@ class MainWindow(QMainWindow):
         note.setObjectName('muted')
         note.setWordWrap(True)
         column.addWidget(note)
-        self.ai_formant_toggle = QCheckBox('フォルマントを持ち上げる（AIのみ）')
+        self.ai_formant_toggle = QCheckBox('フォルマントを持ち上げる')
         self.ai_formant_toggle.setChecked(self.settings.ai_formant_on)
         self.ai_formant_toggle.setToolTip('共振を高域へ寄せ、女声らしく明るくします。\n'
                                           '既定はOFF。停止中でも変換中でも切替できます。')
@@ -3553,9 +3555,9 @@ class MainWindow(QMainWindow):
         self.ai_device.setToolTip('推論の実行場所。同梱の声はCPUで測定しました。「自動」もCPUを選びます。GPU（CUDA）は Kaggle の Tesla T4 で計測済み（CPUと2.0倍速、差は-76dB）で、選んだときだけ試します。聴感の確認はまだです。')
         for name, combo in [('処理構成', self.ai_quality), ('CPU threads', self.ai_threads), ('遅延と自然さ（先読み）', self.ai_lookahead), ('実行デバイス', self.ai_device)]:
             details.addWidget(self._labelled_row(name, combo))
-        self.ai_silent_on_error = QCheckBox('エラー時は無音にする（地声を出さない）')
+        self.ai_silent_on_error = QCheckBox('エラー時は無音にする')
         self.ai_silent_on_error.setChecked(bool(self.settings.ai_silent_on_error))
-        self.ai_silent_on_error.setToolTip('AIが止まったとき、変換前の自分の声をそのまま出さずに、無音にします。通話や配信向けです。')
+        self.ai_silent_on_error.setToolTip('AIが止まったとき、変換前の自分の声（地声）をそのまま出さずに、無音にします。通話や配信向けです。')
         details.addWidget(self.ai_silent_on_error)
         self.ai_brightness, self.ai_brightness_label = self._slider(details, 'AI Brightness', 0, 100, round(self.settings.ai_brightness))
         self.ai_low_cut = QCheckBox('Low Cut · 90 Hz')
@@ -4339,7 +4341,7 @@ class MainWindow(QMainWindow):
         row.addStretch()
         label = QLabel()
         reset = QPushButton('おすすめ')
-        reset.setFixedSize(68, 28)
+        reset.setFixedSize(60, 28)
         reset.setStyleSheet('padding: 0px 4px; font-size: 12px;')
         reset.setToolTip('このスライダーを、おすすめの値にします。')
         reset.setVisible(False)
