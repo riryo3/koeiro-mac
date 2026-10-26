@@ -320,3 +320,32 @@ def test_rescan_survives_failed_reinitialization():
 
     devices = rescan_devices(BrokenBackend())
     assert [device.label for device in devices] == [INPUT.label, OUTPUT.label]
+
+
+def test_mute_cuts_the_chain_input_but_keeps_the_input_meter():
+    seen = []
+
+    class Probe(AudioProcessor):
+        def process(self, audio, sample_rate):
+            seen.append(float(np.abs(audio).max()))
+            return audio
+
+    backend = FakeBackend()
+    engine = AudioEngine(chain=ProcessorChain(main_processor=Probe()), backend=backend)
+    engine.start(EngineConfig(INPUT, OUTPUT))
+    stream = backend.streams[0]
+    stream.indata[:, 0] = 0.2
+
+    def run():
+        seen.clear()
+        for _ in range(20):
+            stream.tick()
+        return max(seen), float(np.abs(stream.outdata).max())
+
+    assert run() == pytest.approx((0.2, 0.2), abs=1e-5)
+    engine.muted = True
+    assert run() == (0.0, 0.0)         # the AI never hears the muted speech, so nothing comes out later
+    assert engine.input_peak > 0.19    # but the meter still shows the microphone
+    engine.muted = False
+    assert run() == pytest.approx((0.2, 0.2), abs=1e-5)
+    engine.stop()

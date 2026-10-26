@@ -66,7 +66,7 @@ class AppSettings:
     output_low_cut: bool = False
     output_low_cut_hz: float = 100.0
     output_high_cut: bool = False
-    output_high_cut_hz: float = 6000.0
+    output_high_cut_hz: float = 4000.0   # the cut that removed the hiss without making the voice muffled
     denoise: bool = False
     denoise_strength: float = 0.6
     # Off by default: output conditioning is a user choice, not the shipped route.
@@ -85,6 +85,7 @@ class AppSettings:
     tutorial_seen: bool = False
     window_size: tuple = (560, 750)
     window_position: tuple | None = None
+    compact_free_position: tuple | None = None   # where the small window was last dragged to
     dsp_mode: str = "original"
     preset: str = "Original"
     pitch_semitones: float = 3.0
@@ -101,6 +102,9 @@ class AppSettings:
     # the initial value matches it instead of starting one step behind.
     ai_threads: int = 2
     ai_repair_lookahead: int = 10
+    ai_silent_on_error: bool = True
+    compact_pin: bool = False
+    compact_corner: str = 'free'   # where the small window goes: free / top_left / top_right / bottom_left / bottom_right
     ai_device: str = "auto"
     ai_brightness: float = 50.0
     ai_low_cut: bool = True
@@ -143,7 +147,7 @@ class AppSettings:
 
     def ai_parameters(self):
         return AIParameters(quality=self.ai_quality, threads=self.ai_threads, device=self.ai_device, model=self.ai_model,
-                            repair_lookahead=self.ai_repair_lookahead,
+                            repair_lookahead=self.ai_repair_lookahead, silent_on_error=self.ai_silent_on_error,
                             brightness=self.ai_brightness, low_cut=self.ai_low_cut,
                             limiter=self.ai_limiter, post_fx=self.ai_post_fx,
                             output_wait_ms=self.ai_output_wait_ms,crossfade_ms=self.ai_crossfade_ms,pitch=self.ai_pitch,
@@ -198,7 +202,7 @@ class AppSettings:
         values["output_silence_mute"] = silence_mute if type(silence_mute) is bool else True
         output_high_cut = data.get("output_high_cut")
         values["output_high_cut"] = output_high_cut if type(output_high_cut) is bool else False
-        values["output_high_cut_hz"] = _number(data.get("output_high_cut_hz"), 6000.0, 2000.0, 12000.0)
+        values["output_high_cut_hz"] = _number(data.get("output_high_cut_hz"), 4000.0, 2000.0, 12000.0)
         denoise = data.get("denoise")
         values["denoise"] = denoise if type(denoise) is bool else False
         values["denoise_strength"] = _number(data.get("denoise_strength"), 0.6, 0, 1)
@@ -249,6 +253,11 @@ class AppSettings:
             values['ai_model'] = default_voice_id() or next(iter(VOICE_PROFILES), None)
         threads = data.get('ai_threads')
         values['ai_threads'] = threads if type(threads) is int and 1 <= threads <= 4 else defaults.ai_threads
+        for name in ('ai_silent_on_error', 'compact_pin'):
+            flag = data.get(name)
+            values[name] = flag if type(flag) is bool else getattr(defaults, name)
+        corner = data.get('compact_corner')
+        values['compact_corner'] = corner if corner in ('free', 'top_left', 'top_right', 'bottom_left', 'bottom_right') else defaults.compact_corner
         lookahead = data.get('ai_repair_lookahead')
         values['ai_repair_lookahead'] = lookahead if type(lookahead) is int and 1 <= lookahead <= 10 else defaults.ai_repair_lookahead
         device = data.get('ai_device')
@@ -291,7 +300,8 @@ class AppSettings:
         values['app_update_ignored'] = (ignored if isinstance(ignored, str) and len(ignored) <= 64
                                         else '')
         for field, bounds in (("window_size", ((480, 4096), (650, 4096))),
-                              ("window_position", ((-32768, 32768), (-32768, 32768)))):
+                              ("window_position", ((-32768, 32768), (-32768, 32768))),
+                              ("compact_free_position", ((-32768, 32768), (-32768, 32768)))):
             value = data.get(field)
             if (isinstance(value, (list, tuple)) and len(value) == 2
                     and all(type(v) is int and low <= v <= high for v, (low, high) in zip(value, bounds))):

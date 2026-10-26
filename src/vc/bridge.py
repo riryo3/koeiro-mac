@@ -24,10 +24,10 @@ def fallback_is_silent(parameters):
     processors/ai_voice.py and AIBridge.fallback_note() both read this one predicate,
     so the log can never promise audio the callback does not produce: the sentence
     route stays silent, because once a sentence has been engaged its raw voice must
-    never reach the listener.
+    never reach the listener. The streaming route does the same when `silent_on_error` is on.
     """
     return bool(parameters is not None and parameters.mute_during_startup
-                and parameters.delivery == 'utterance')
+                and (parameters.delivery == 'utterance' or parameters.silent_on_error))
 
 
 class AIBridge:

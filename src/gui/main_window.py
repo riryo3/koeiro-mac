@@ -8,9 +8,9 @@ from pathlib import Path
 import sys
 import time
 
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QCursor
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFormLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QBoxLayout, QButtonGroup, QComboBox, QFormLayout, QHBoxLayout,
                                QCheckBox, QFrame, QLabel, QLayout, QLineEdit, QMainWindow, QMessageBox,
                                QPushButton, QScrollArea, QSizePolicy, QSlider, QSpacerItem,
                                QVBoxLayout, QWidget, QDoubleSpinBox, QSpinBox)
@@ -199,6 +199,7 @@ class MainWindow(QMainWindow):
         body_row.setContentsMargins(0, 0, 0, 0)
         body_row.setSpacing(0)
         outer.addWidget(body, 1)
+        self._outer = outer
 
         # The stage scrolls as one piece on a short window; Start sits at its foot.
         stage_scroll = QScrollArea()
@@ -345,7 +346,7 @@ class MainWindow(QMainWindow):
         self.meter_reset = QPushButton('おすすめに戻す')
         self.meter_reset.setMinimumHeight(44)
         self.meter_reset.setStyleSheet('font-size: 14px; font-weight: 600;')
-        self.meter_reset.setToolTip('Gain・入力ゲート・出力ゲートを、おすすめの値に戻します。')
+        self.meter_reset.setToolTip('Gain・入力ゲート・出力ゲート・帯域の切り取り（低い音・高い音）を、おすすめの状態に戻します。')
         reset_row = QHBoxLayout()
         reset_row.setContentsMargins(12, 0, 8, 0)
         reset_row.addWidget(self.meter_reset)
@@ -356,42 +357,111 @@ class MainWindow(QMainWindow):
                                '入力側=これ以下は変換に送られません / 出力側=AIの無音ノイズを消します。\n'
                                '線のダブルクリック、または下のボタンで、おすすめの値に戻ります。右の縦のつまみは、Gain（音量）です。')
         # 簡易表示: Start/Stop in one button and ミュート, above the meters (hidden otherwise).
-        self.compact_bar = QWidget()
-        compact_row = QVBoxLayout(self.compact_bar)   # stacked: the window is only as wide as the meters
-        compact_row.setContentsMargins(12, 0, 8, 0)
-        compact_row.setSpacing(6)
-        self.compact_toggle = QPushButton('Start')
+        from .shell import MiniMeter
+        # The small window: its own panel, shown instead of the whole body. Square: the state band and
+        # the lamps on top, thin meters on the left, the large ミュート and the small buttons on the right.
+        self.compact_panel = QWidget()
+        panel = QVBoxLayout(self.compact_panel)
+        panel.setContentsMargins(5, 4, 5, 6)   # the window's lower corners are round: keep clear of them
+        panel.setSpacing(3)
+        # No Start/Stop in the small window: a stray click while streaming would cut the voice.
+        # The button stays (hidden) because the sync code mirrors the real one into it.
+        self.compact_toggle = QPushButton('Start', self.compact_panel)
         self.compact_toggle.setObjectName('start')
-        self.compact_toggle.setMinimumHeight(44)
         self.compact_toggle.setEnabled(False)
+        self.compact_toggle.setVisible(False)
         self.compact_toggle.clicked.connect(self._toggle_transport)
+        # The state is the first thing to read: a large coloured band, then a slim row of lamps.
+        self.compact_status = QLabel('')
+        self.compact_status.setWordWrap(False)   # one line; the text shrinks to fit instead
+        self.compact_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.compact_status.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self.compact_status.setMinimumHeight(28)
+        self.compact_status.setMinimumWidth(0)
+        self.compact_status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._compact_status_style = None
+        panel.addWidget(self.compact_status)
+        self.compact_relay = Relay()
+        self.compact_relay.margin = 9
+        self.compact_relay.show_labels = False
+        self.compact_relay.setFixedHeight(20)
+        self.compact_relay.setFixedWidth(70)   # the three lamps sit close together
+        self.compact_relay.setCursor(Qt.CursorShape.ArrowCursor)   # a click does nothing here
+        self.compact_relay.setToolTip('3つのランプは実際の動きです。\n入力=マイクの音 / 変換=変換中 / 出力=出ている音。\n'
+                                      '灰色は停止中、赤はエラーです。')
+        self.compact_body = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self.compact_body.setSpacing(5)
+        meters = QWidget()
+        meters_row = QHBoxLayout(meters)
+        meters_row.setContentsMargins(0, 0, 0, 0)
+        meters_row.setSpacing(5)
+        meters_row.addStretch(1)
+        self.compact_meter_in, self.compact_meter_out = MiniMeter(), MiniMeter()
+        for meter in (self.compact_meter_in, self.compact_meter_out):
+            meter.setMinimumHeight(30)
+        self.compact_db_in, self.compact_db_out = QLabel('入'), QLabel('出')   # captions only: no numbers
+        for meter, label in ((self.compact_meter_in, self.compact_db_in), (self.compact_meter_out, self.compact_db_out)):
+            column = QVBoxLayout()
+            column.setSpacing(2)
+            label.setObjectName('muted')
+            label.setStyleSheet('font-size: 10px;')
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            column.addWidget(meter, 1, Qt.AlignmentFlag.AlignHCenter)
+            column.addWidget(label)
+            meters_row.addLayout(column)
+        meters_row.addStretch(1)
+        side = QWidget()
+        side_column = QVBoxLayout(side)
+        side_column.setContentsMargins(0, 0, 0, 0)
+        side_column.setSpacing(3)
+        side_column.addWidget(self.compact_relay, 0, Qt.AlignmentFlag.AlignHCenter)
         self.compact_mute = QPushButton('ミュート')
         self.compact_mute.setObjectName('mute')
         self.compact_mute.setCheckable(True)
-        self.compact_mute.setMinimumHeight(44)
-        compact_row.addWidget(self.compact_toggle)
-        compact_row.addWidget(self.compact_mute)
-        self.compact_status = QLabel('')
-        self.compact_status.setObjectName('muted')
-        self.compact_status.setWordWrap(True)
-        self.compact_status.setTextFormat(Qt.TextFormat.PlainText)
-        self.compact_status.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-        self.compact_status.setMinimumHeight(34)   # two lines: the meters below do not jump
-        compact_row.addWidget(self.compact_status)
-        # The same three lamps as in the full view, fed from the same numbers.
-        self.compact_relay = Relay()
-        self.compact_relay.margin = 26
-        self.compact_relay.short_labels = True
-        self.compact_relay.setFixedHeight(46)
-        self.compact_relay.tapped.connect(self._toggle_transport)
-        compact_row.addWidget(self.compact_relay)
+        self.compact_mute.setMinimumHeight(60)
+        self.compact_mute.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.compact_mute.setStyleSheet('font-size: 17px; font-weight: 700;')
+        self.compact_mute.setToolTip('出力とモニターの音を、すぐに消します（Space / M）。もう一度押すと、戻ります。')
+        side_column.addWidget(self.compact_mute, 1)
+        # The small buttons: one rounded group, equal widths, thin dividers; only the two ends are round.
+        group = QFrame()
+        group.setObjectName('compactGroup')
+        group.setStyleSheet('QFrame#compactGroup { border: 1px solid palette(mid); border-radius: 8px; }'
+                            'QFrame#compactGroup QPushButton { border: none; border-radius: 0; background: transparent;'
+                            ' font-size: 10px; padding: 3px 2px; }'
+                            'QFrame#compactGroup QPushButton:hover { background: palette(midlight); }'
+                            'QFrame#compactGroup QPushButton:checked { background: palette(highlight);'
+                            ' color: palette(highlighted-text); }'
+                            'QFrame#compactGroup QFrame#divider { background: palette(mid); border: none; }')
+        tools = QHBoxLayout(group)
+        tools.setContentsMargins(1, 1, 1, 1)
+        tools.setSpacing(0)
+        self.compact_restore = QPushButton('通常表示')
+        self.compact_restore.setToolTip('通常の大きな画面に戻ります（⌘⇧M）。')
+        self.compact_restore.clicked.connect(lambda: self.action_compact.setChecked(False))
+        self.compact_pin = QPushButton('最前面')
+        self.compact_pin.setCheckable(True)
+        self.compact_pin.setChecked(bool(getattr(self.settings, 'compact_pin', False)))
+        self.compact_pin.setToolTip('他のアプリより手前に表示したままにします（この小さな窓のときだけ）。')
+        self.compact_pin.toggled.connect(self._set_compact_pin)
+        for index, button in enumerate((self.compact_restore, self.compact_pin)):
+            if index:
+                divider = QFrame()
+                divider.setObjectName('divider')
+                divider.setFixedWidth(1)
+                tools.addWidget(divider)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            tools.addWidget(button, 1)
+        side_column.addWidget(group)
+        self.compact_body.addWidget(meters)
+        self.compact_body.addWidget(side, 1)
+        panel.addLayout(self.compact_body, 1)
+        self.compact_panel.setVisible(False)
+        self._outer.addWidget(self.compact_panel, 1)
         # The status text is set from many places; mirror it while the compact view is on.
-        # setText only when it differs: nothing is shown or hidden from this timer.
         self._compact_timer = QTimer(self)
         self._compact_timer.setInterval(400)
         self._compact_timer.timeout.connect(self._sync_compact_status)
-        self.compact_bar.setVisible(False)
-        strip_layout.insertWidget(0, self.compact_bar)
         body_row.insertWidget(0, meter_strip)
         self.meter_strip = meter_strip
         self._fit_meter_width(force=True)
@@ -437,7 +507,7 @@ class MainWindow(QMainWindow):
         self.main_toggle.setMinimumHeight(44)
         self.main_toggle.setFixedWidth(96)   # "Start" and "Stop" must not change the size
         self.main_toggle.setEnabled(False)
-        self.main_toggle.setToolTip('開始 / 停止（スペースキー）')
+        self.main_toggle.setToolTip('開始 / 停止（⌘S）')
         self.main_toggle.clicked.connect(self._toggle_transport)
         transport_layout.addWidget(self.main_toggle)
         # Mute: silences the output and the monitor at once (M key / 操作 menu).
@@ -446,7 +516,7 @@ class MainWindow(QMainWindow):
         self.mute_button.setCheckable(True)
         self.mute_button.setMinimumHeight(44)
         self.mute_button.setFixedWidth(112)   # "ミュート中" must not change the size
-        self.mute_button.setToolTip('出力とモニターの音を、すぐに消します（Mキー）。もう一度押すと、戻ります。')
+        self.mute_button.setToolTip('出力とモニターの音を、すぐに消します（Space / M）。もう一度押すと、戻ります。')
         self.mute_button.toggled.connect(self._mute_toggled)
         self.compact_mute.toggled.connect(self.mute_button.setChecked)
         self.mute_button.toggled.connect(self._sync_compact_buttons)
@@ -867,6 +937,7 @@ class MainWindow(QMainWindow):
             'tune_pcap': d.ai_tune_pcap*20, 'tune_level': d.ai_tune_level_db*2,
             'pitch': d.pitch_semitones*10, 'formant': d.formant_semitones*10,
             'brightness': d.brightness, 'wet': d.wet*100,
+            'out_high_cut_hz': d.output_high_cut_hz/100,
         }
         self._slider_defaults = []
         for name, value in defaults.items():
@@ -917,8 +988,20 @@ class MainWindow(QMainWindow):
         self.meter_reset.clicked.connect(lambda: [s.setValue(s.default_value)
                                                   for s in (gain, gate, out_gate)
                                                   if s.default_value is not None])
+        self.meter_reset.clicked.connect(self._reset_band_cuts)
         for slider in (gain, gate, out_gate):
             self._container(slider).setVisible(False)
+
+    def _reset_band_cuts(self):
+        """おすすめに戻す also clears the band: both cuts off, their frequencies back to the defaults."""
+        from src.settings.manager import AppSettings
+        defaults = AppSettings()
+        self._out_low_cut_hz = float(defaults.output_low_cut_hz)
+        self.out_high_cut_hz.setValue(round(defaults.output_high_cut_hz / 100))
+        self.out_low_cut_toggle.setChecked(False)
+        self.out_high_cut_toggle.setChecked(False)
+        self._out_low_cut_changed()
+        self._out_high_cut_changed()
 
     def _reset_all_sliders(self):
         # Only sliders that can change right now: the others are greyed out while the
@@ -1051,15 +1134,19 @@ class MainWindow(QMainWindow):
         self._voice_wanted = True
         self._voice_floating = False
         self._compact = False
+        self._normal_pos = None   # where the full window was before the small one
+        free = self.settings.compact_free_position   # where the small window was last dragged to (kept across runs)
+        self._compact_free_pos = QPoint(*free) if free else None
+        self._placing = False     # True while the program itself moves the small window
         menu_bar = self.menuBar()
         control = menu_bar.addMenu('操作')
         self.action_toggle = QAction('Start / Stop', self)
-        self.action_toggle.setShortcut('Space')
+        self.action_toggle.setShortcut('Ctrl+S')
         self.action_toggle.triggered.connect(self._toggle_transport_shortcut)
         control.addAction(self.action_toggle)
         self.action_mute = QAction('ミュート', self)
         self.action_mute.setCheckable(True)
-        self.action_mute.setShortcut('M')
+        self.action_mute.setShortcuts(['Space', 'M'])
         self.action_mute.toggled.connect(lambda checked: self.mute_button.setChecked(checked))
         control.addAction(self.action_mute)
         self.action_restart_ai = QAction('AIを再起動', self)
@@ -1096,11 +1183,35 @@ class MainWindow(QMainWindow):
         self.action_voice_list.toggled.connect(self._voice_list_menu_toggled)
         view.addAction(self.action_voice_list)
         # 簡易表示: once everything is set, only the meters, the Gain fader and Start / Stop / ミュート.
-        self.action_compact = QAction('簡易表示（メーターと Start / Stop だけ）', self)
+        self.action_compact = QAction('簡易表示（ミュートとメーターだけ）', self)
         self.action_compact.setCheckable(True)
         self.action_compact.setShortcut('Ctrl+Shift+M')
         self.action_compact.toggled.connect(self._set_compact)
         view.addAction(self.action_compact)
+        window_menu = menu_bar.addMenu('ウインドウ')   # between 表示 and ヘルプ
+        corner_menu = window_menu.addMenu('簡易表示の位置')
+        from PySide6.QtGui import QActionGroup as _ActionGroup
+        corner_group = _ActionGroup(self)
+        corner_group.setExclusive(True)
+        self.corner_actions = {}
+        for key, label in (('top_left', '左上\t⌘1'), ('top_right', '右上\t⌘2'), ('bottom_left', '左下\t⌘3'),
+                           ('bottom_right', '右下\t⌘4'), ('free', '自由な位置（最後に動かした場所）\t⌘0')):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(self.settings.compact_corner == key)
+            corner_group.addAction(action)
+            corner_menu.addAction(action)
+            action.triggered.connect(lambda _checked=False, k=key: self._set_compact_corner(k))
+            self.corner_actions[key] = action
+        # ⌘1-⌘4 (corners) and ⌘0 (the free position) only work in the small window: ⌘1-⌘3 are the voice modes
+        # elsewhere, and those are switched off while the small window is on (see _set_compact).
+        from PySide6.QtGui import QKeySequence, QShortcut
+        self._corner_shortcuts = []
+        for number, key in ((1, 'top_left'), (2, 'top_right'), (3, 'bottom_left'), (4, 'bottom_right'), (0, 'free')):
+            shortcut = QShortcut(QKeySequence(f'Ctrl+{number}'), self)
+            shortcut.setEnabled(False)
+            shortcut.activated.connect(lambda k=key: self._corner_shortcut(k))
+            self._corner_shortcuts.append(shortcut)
         from . import shell
         view.addSeparator()
         # 外観 and テーマカラー are twin submenus, so they read as one group.
@@ -1374,10 +1485,60 @@ class MainWindow(QMainWindow):
                          QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self.meter_strip.layout().invalidate()
 
+    def _compact_ai_loading(self):
+        """True while the AI route is selected and its worker has not reported Ready."""
+        try:
+            if self.mode.currentData() == 'ai_voice' and self.router is not None:
+                return self.router.ai.bridge.status in ('Loading', 'Warming Up')
+        except Exception:
+            pass
+        return False
+
     def _sync_compact_status(self):
-        text = self.status.text()
+        """The big band at the top: stopped or failed is loud, a running engine is a calm green."""
+        kind = getattr(self, '_stage_kind', 'stopped')
+        from . import shell
+        dark = bool(getattr(shell, '_DARK', False))
+        calm = False   # the normal states are pale and flat, so the band does not look like a button
+        if kind == 'error':
+            text = 'エラー：' + (getattr(self, '_stage_error', '') or '原因は通常表示で確認')[:50]
+            colours = 'background:#8e0000;color:#ffffff;'
+        elif kind == 'stopped':
+            text = '停止中・声は出ていません'
+            colours = 'background:#ffc107;color:#1a1a1a;'
+        elif self.mute_button.isChecked():
+            text = 'ミュート中'
+            colours = ('background:#2b1818;color:#f2a0a0;' if dark else 'background:#fbe9e9;color:#a63232;')
+            calm = True   # the red button already says it: the band stays pale
+        elif self._compact_ai_loading():
+            text = 'AI 準備中…'
+            colours = ('background:#16263d;color:#8ab4f8;' if dark else 'background:#e7eefa;color:#2b5aa8;')
+            calm = True
+        else:
+            text = '変換中'
+            colours = ('background:#17291d;color:#8fd19e;' if dark else 'background:#e8f3ea;color:#2f6f3e;')
+            calm = True
+        # One line: start at 17 px and shrink until the text fits the band (not below 9 px).
+        from PySide6.QtGui import QFont, QFontMetrics
+        room = self.compact_status.width() - 20
+        size = 15
+        if room > 20:
+            while size > 9:
+                font = QFont(self.compact_status.font())
+                font.setPixelSize(size)
+                font.setBold(True)
+                if QFontMetrics(font).horizontalAdvance(text) <= room:
+                    break
+                size -= 1
+        weight = 600 if calm else 700
+        if calm:
+            size = min(size, 14)
+        style = f'{colours}border-radius:8px;padding:3px;font-size:{size}px;font-weight:{weight};'
         if text != self.compact_status.text():
             self.compact_status.setText(text)
+        if style != self._compact_status_style:
+            self._compact_status_style = style
+            self.compact_status.setStyleSheet(style)
 
     def _sync_compact_buttons(self, *_):
         """The compact Start/Stop and ミュート mirror the real buttons (which stay the source of truth)."""
@@ -1396,12 +1557,15 @@ class MainWindow(QMainWindow):
         self.compact_mute.setChecked(muted)
         self.compact_mute.blockSignals(False)
         self.compact_mute.setText('ミュート中' if muted else 'ミュート')
+        if self._compact:
+            self._sync_compact_status()
 
     def _set_compact(self, on):
-        """A narrow, tall window: Start/Stop, ミュート, the meters with Gain, and おすすめ.
+        """The small window: the three lamps, two slim meters and a large ミュート.
 
-        Only the user's choice calls this (never a timer), so hiding and showing widgets
-        here cannot disturb clicks. Leaving it restores the full window.
+        There is no Start/Stop here on purpose (a stray click would cut the voice), and no
+        slider to drag. It replaces the whole body; leaving it restores the full window.
+        Only the user's choice calls this (never a timer).
         """
         on = bool(on)
         if on == self._compact:
@@ -1410,41 +1574,125 @@ class MainWindow(QMainWindow):
             if self.isFullScreen() or self.isMaximized():
                 self.showNormal()
             self._normal_size = self.size()
+            self._normal_pos = self.pos()
             self._normal_minimum = self.minimumSize()
             self._voice_before_compact = self._voice_wanted
             if self._guide_overlay is not None:   # an open guide would point at hidden controls
                 self._guide_overlay.skip()
             self._compact = True
-            self._centre_widget.setVisible(False)
             self._toggle_voice_panel(collapsed=True)
-            self.compact_bar.setVisible(True)
+            self._header_was_visible = self.header.isVisible()
+            self.header.hide()
+            self._body.setVisible(False)
+            self.compact_panel.setVisible(True)
             self._sync_compact_status()
             self._compact_timer.start()
-            self.meter_caption.setVisible(False)
-            self.meter_key.setVisible(False)
-            self.meter_reset.setText('おすすめ')
             self._sync_compact_buttons()
             self.action_voice_list.setEnabled(False)
-            self.setMinimumSize(0, 0)
-            self._fit_meter_width(force=True)
-            self.centralWidget().layout().activate()
-            self.resize(self.meter_strip.width(), 600)
-            self.setFixedSize(self.size())   # no resizing here; macOS then greys out the full-screen button too
+            self._fit_compact()
+            self._mode_actions_enabled = {key: action.isEnabled() for key, action in self.mode_actions.items()}
+            for action in self.mode_actions.values():
+                action.setEnabled(False)   # a stray ⌘1 must not switch to the unchanged voice
+            for shortcut in self._corner_shortcuts:
+                shortcut.setEnabled(True)
+            self._place_compact()
+            if self.compact_pin.isChecked():
+                self._apply_pin(True)
         else:
+            self._apply_pin(False)
             self._compact = False
-            self._centre_widget.setVisible(True)
-            self.compact_bar.setVisible(False)
+            for shortcut in self._corner_shortcuts:
+                shortcut.setEnabled(False)
+            for key, action in self.mode_actions.items():
+                action.setEnabled(getattr(self, '_mode_actions_enabled', {}).get(key, True))
+            self.compact_panel.setVisible(False)
             self._compact_timer.stop()
-            self.meter_caption.setVisible(True)
-            self.meter_key.setVisible(True)
-            self.meter_reset.setText('おすすめに戻す')
+            self._body.setVisible(True)
+            if getattr(self, '_header_was_visible', False):
+                self.header.show()
             self.action_voice_list.setEnabled(True)
             self.setMaximumSize(16777215, 16777215)   # QWIDGETSIZE_MAX: resizable again
             self.setMinimumSize(self._normal_minimum)
             self.resize(self._normal_size)
+            self._restore_normal_position()
             self._toggle_voice_panel(collapsed=not self._voice_before_compact)
         self._place_voice_panel()
         self._fit_meter_width()
+
+    def _fit_compact(self):
+        """Size the small window: a fixed square."""
+        self.setMaximumSize(16777215, 16777215)
+        self.setMinimumSize(0, 0)
+        self.centralWidget().layout().activate()
+        # Tall enough for everything in the panel (plus the menu bar where it is not the system's).
+        top = 0 if self.menuBar().isNativeMenuBar() else self.menuBar().sizeHint().height()
+        self.resize(184, max(156, self.compact_panel.minimumSizeHint().height() + top))
+        self.setFixedSize(self.size())   # no resizing here; macOS then greys out the full-screen button too
+        self._compact_status_style = None   # the band's width changed: fit the text again
+        QTimer.singleShot(0, self._sync_compact_status)
+
+    def _screen_area(self):
+        screen = self.screen() or QApplication.primaryScreen()
+        return screen.availableGeometry()
+
+    def _place_compact(self):
+        """Put the small window in the chosen corner of its screen (16 px from the edges), or where it was last dragged."""
+        corner = self.settings.compact_corner
+        area = self._screen_area()
+        frame = self.frameGeometry()
+        margin = 16
+        if corner == 'free':
+            if self._compact_free_pos is None:
+                return
+            x = max(area.left(), min(self._compact_free_pos.x(), area.right() - frame.width() + 1))
+            y = max(area.top(), min(self._compact_free_pos.y(), area.bottom() - frame.height() + 1))
+        else:
+            x = area.left() + margin if corner.endswith('left') else area.right() - frame.width() - margin + 1
+            y = area.top() + margin if corner.startswith('top') else area.bottom() - frame.height() - margin + 1
+        self._placing = True
+        self.move(x, y)
+        QTimer.singleShot(150, lambda: setattr(self, '_placing', False))
+
+    def moveEvent(self, event):
+        """A drag of the small window is remembered as its free position (also for the next run)."""
+        super().moveEvent(event)
+        if getattr(self, '_compact', False) and not getattr(self, '_placing', False) and self.isVisible():
+            self._compact_free_pos = QPoint(self.pos())
+
+    def _corner_shortcut(self, key):
+        self.corner_actions[key].setChecked(True)
+        self._set_compact_corner(key)
+
+    def _set_compact_corner(self, key):
+        self.settings = replace(self.settings, compact_corner=key)
+        if self._compact:
+            self._place_compact()
+
+    def _restore_normal_position(self):
+        """Back to where the full window was, but never grown off the screen from a corner.
+
+        The window grows from its top-left corner, so a full-size window restored at the bottom
+        right would run off the screen; the position is pulled back until the frame fits.
+        """
+        area = self._screen_area()
+        frame = self.frameGeometry()
+        pos = self._normal_pos if self._normal_pos is not None else self.pos()
+        x = max(area.left(), min(pos.x(), area.right() - frame.width() + 1))
+        y = max(area.top(), min(pos.y(), area.bottom() - frame.height() + 1))
+        self.move(x, y)
+
+    def _apply_pin(self, on):
+        """Keep the window above other apps (the small view only); a changed flag re-shows the window."""
+        on = bool(on)
+        if bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) == on:
+            return
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on)
+        self.show()
+
+    def _set_compact_pin(self, checked):
+        self.settings = replace(self.settings, compact_pin=bool(checked))
+        if self._compact:
+            self._apply_pin(checked)
 
     def _close_voice_panel(self):
         self._voice_user_choice = False if not self._voice_floating else self._voice_user_choice
@@ -1613,8 +1861,9 @@ class MainWindow(QMainWindow):
             action.blockSignals(False)
 
     def _toggle_transport_shortcut(self):
-        """Space: Start / Stop. Not while the guide or a dialog has the keyboard."""
-        if getattr(self, '_guide_open', False) or QApplication.activeModalWidget() is not None:
+        """⌘S: Start / Stop. Not while the guide or a dialog has the keyboard, and never in the small
+        window (a stray key there would cut the voice)."""
+        if getattr(self, '_guide_open', False) or QApplication.activeModalWidget() is not None or self._compact:
             return
         if QApplication.activeWindow() is not self:
             return
@@ -3304,6 +3553,10 @@ class MainWindow(QMainWindow):
         self.ai_device.setToolTip('推論の実行場所。同梱の声はCPUで測定しました。「自動」もCPUを選びます。GPU（CUDA）は Kaggle の Tesla T4 で計測済み（CPUと2.0倍速、差は-76dB）で、選んだときだけ試します。聴感の確認はまだです。')
         for name, combo in [('処理構成', self.ai_quality), ('CPU threads', self.ai_threads), ('遅延と自然さ（先読み）', self.ai_lookahead), ('実行デバイス', self.ai_device)]:
             details.addWidget(self._labelled_row(name, combo))
+        self.ai_silent_on_error = QCheckBox('エラー時は無音にする（地声を出さない）')
+        self.ai_silent_on_error.setChecked(bool(self.settings.ai_silent_on_error))
+        self.ai_silent_on_error.setToolTip('AIが止まったとき、変換前の自分の声をそのまま出さずに、無音にします。通話や配信向けです。')
+        details.addWidget(self.ai_silent_on_error)
         self.ai_brightness, self.ai_brightness_label = self._slider(details, 'AI Brightness', 0, 100, round(self.settings.ai_brightness))
         self.ai_low_cut = QCheckBox('Low Cut · 90 Hz')
         self.ai_limiter = QCheckBox('Limiter')
@@ -3368,8 +3621,9 @@ class MainWindow(QMainWindow):
         column.addWidget(note)
         for combo in (self.ai_quality, self.ai_threads, self.ai_lookahead, self.ai_device):
             combo.currentIndexChanged.connect(self._ai_structure_changed)
+        self.ai_lookahead.currentIndexChanged.connect(lambda _index: self._set_latency_estimate())
         self.ai_brightness.valueChanged.connect(self._ai_fx_changed)
-        for checkbox in (self.ai_low_cut, self.ai_limiter, self.ai_post_fx):
+        for checkbox in (self.ai_low_cut, self.ai_limiter, self.ai_post_fx, self.ai_silent_on_error):
             checkbox.toggled.connect(self._ai_fx_changed)
         for slider in (self.tune_sib, self.tune_cons, self.tune_caps, self.tune_floor, self.tune_excess,
                        self.tune_mid, self.tune_match, self.tune_ptrans, self.tune_pcap, self.tune_level):
@@ -3388,7 +3642,7 @@ class MainWindow(QMainWindow):
         self._ai_fx_changed()
         self._update_voice_info()
         if not self.router:
-            for widget in (self.ai_model, self.ai_quality, self.ai_threads, self.ai_lookahead, self.ai_device, self.ai_brightness, self.ai_low_cut, self.ai_limiter, self.ai_post_fx):
+            for widget in (self.ai_model, self.ai_quality, self.ai_threads, self.ai_lookahead, self.ai_silent_on_error, self.ai_device, self.ai_brightness, self.ai_low_cut, self.ai_limiter, self.ai_post_fx):
                 widget.setEnabled(False)
 
     def _build_diagnostics_section(self, layout):
@@ -3626,6 +3880,7 @@ class MainWindow(QMainWindow):
             raise ValueError('利用可能なAI音声がありません。右の声リストから声を登録してください。')
         return AIParameters(model=model,quality=self.ai_quality.currentData(), threads=self.ai_threads.currentData(),
                             repair_lookahead=self.ai_lookahead.currentData(),
+                            silent_on_error=self.ai_silent_on_error.isChecked(),
                             device=self.ai_device.currentData(),
                             brightness=self.ai_brightness.value(), low_cut=self.ai_low_cut.isChecked(),
                             limiter=self.ai_limiter.isChecked(), post_fx=self.ai_post_fx.isChecked(),
@@ -3667,7 +3922,8 @@ class MainWindow(QMainWindow):
             from dataclasses import replace
             current = self.router.ai.bridge.parameters
             self.router.ai.bridge.parameters = replace(current, brightness=parameters.brightness,
-                low_cut=parameters.low_cut, limiter=parameters.limiter, post_fx=parameters.post_fx,pitch=parameters.pitch)
+                low_cut=parameters.low_cut, limiter=parameters.limiter, post_fx=parameters.post_fx,pitch=parameters.pitch,
+                silent_on_error=parameters.silent_on_error)
 
     def _tune_changed(self, *_):
         self._update_tune_labels()
@@ -3980,7 +4236,7 @@ class MainWindow(QMainWindow):
             return
         if spec['delivery']=='streaming':
             text=('逐次変換：話しながら120msごとに処理します。\n'
-                  '遅延は小さいですが、帯域復元は行いません。')
+                  '声を出してから約1.2〜2.5秒で聞こえます（「先読み」の設定で変わります）。帯域復元は行いません。')
         elif mode=='utterance_quality':
             text=('一括変換-高品質：ソルバ4ステップと、公式推論と同じ全長の条件補間・ノイズで変換します。\n'
                   '通常の一括変換より待ち時間が長くなります（帯域復元LavaSRは入ります。最大60秒）。\n'
@@ -4860,6 +5116,9 @@ class MainWindow(QMainWindow):
         self.output_db.setText(f"出力\n{amplitude_to_db(self._display_output):.1f}")
         self.input_bar.set_level(self._display_input)
         self.input_bar.set_output_level(self._display_output)
+        if self._compact:
+            self.compact_meter_in.set_level(self._display_input)
+            self.compact_meter_out.set_level(self._display_output)
         engine = self.controller.engine
         if snapshot.state == "Running" and self.band_meter.isVisible() and engine.config is not None:
             from src.audio.spectrum import band_levels
@@ -5017,7 +5276,17 @@ class MainWindow(QMainWindow):
         that colours anything: cyan while running, red on error, grey otherwise.
         """
         running = snapshot.state == 'Running' and not snapshot.error
-        kind = 'error' if snapshot.error else ('running' if running else 'stopped')
+        ai_error = ''
+        try:
+            if snapshot.state == 'Running' and self.router is not None and self.mode.currentData() == 'ai_voice':
+                bridge = self.router.ai.bridge
+                if bridge.status == 'Error':
+                    ai_error = bridge.error or 'AIが止まりました'
+        except Exception:
+            ai_error = ''
+        kind = 'error' if (snapshot.error or ai_error) else ('running' if running else 'stopped')
+        self._stage_kind = kind
+        self._stage_error = (snapshot.error or ai_error or '').splitlines()[0] if (snapshot.error or ai_error) else ''
         for relay in (self.relay, self.compact_relay):
             relay.set_state(kind)
         if running:
@@ -5141,7 +5410,8 @@ class MainWindow(QMainWindow):
 
         The old figure was the audio-device buffer alone (about 70 ms) and left out the
         AI's look-ahead and pre-roll (about 0.8 s together), so it looked far shorter than
-        the real delay. This is still an estimate, never a measurement.
+        the real delay. The phrase-repair lookahead is now included. This is still an
+        estimate, never a measurement.
         """
         if io_ms is None:
             io_ms = getattr(self, '_last_io_ms', 20.0)
@@ -5160,6 +5430,11 @@ class MainWindow(QMainWindow):
                         preroll_ms = float(selected.get('startup_chunks', 0))*120
                         extra = buffer_ms + preroll_ms
                         parts += [f'AIの先読み {buffer_ms:.0f} ms', f'出力の準備 {preroll_ms:.0f} ms']
+                        if selected.get('phrase_repair'):
+                            # Calibrated on recordings (Mac mini M4): 2.5 / 1.7 / 1.2 s at 10 / 5 / 2 hops.
+                            repair_ms = self.ai_lookahead.currentData()*160 + 100
+                            extra += repair_ms
+                            parts.append(f'声の抑揚の補正（先読み） {repair_ms:.0f} ms')
                     else:
                         note = '話し終えてから変換'
         except Exception:
@@ -5171,7 +5446,7 @@ class MainWindow(QMainWindow):
             text = f'遅延の目安 約{total/1000:.1f}秒'
         else:
             text = f'遅延の目安 約{total:.0f} ms'
-        tooltip = '\n'.join(parts + [f'合計の目安 約{total:.0f} ms（実測値ではありません）'])
+        tooltip = '\n'.join(parts + [f'合計の目安 約{total:.0f} ms（録音から測った遅れに合わせた目安です）'])
         if text != self.latency_value.text():
             self.latency_value.setText(text)
         if tooltip != self.latency_value.toolTip():
@@ -5226,7 +5501,10 @@ class MainWindow(QMainWindow):
                         else self.settings.ai_formant),
             window_size=((self._normal_size.width(), self._normal_size.height())
                          if self._compact else (self.width(), self.height())),
-            window_position=(self.x(), self.y()))
+            compact_free_position=((self._compact_free_pos.x(), self._compact_free_pos.y())
+                                   if self._compact_free_pos is not None else None),
+            window_position=((self._normal_pos.x(), self._normal_pos.y())
+                             if self._compact and self._normal_pos is not None else (self.x(), self.y())))
         parameters = self._dsp_parameters()
         self.settings = replace(self.settings, dsp_mode=parameters.mode,
             preset=self.preset.currentText(), pitch_semitones=parameters.pitch,
@@ -5240,7 +5518,7 @@ class MainWindow(QMainWindow):
             pass
         if ai is not None:
             self.settings = replace(self.settings, voice_mode=self.mode.currentData(), ai_model=ai.model,
-            ai_quality=ai.quality, ai_threads=ai.threads, ai_repair_lookahead=ai.repair_lookahead, ai_device=ai.device, ai_brightness=ai.brightness,
+            ai_quality=ai.quality, ai_threads=ai.threads, ai_repair_lookahead=ai.repair_lookahead, ai_silent_on_error=ai.silent_on_error, ai_device=ai.device, ai_brightness=ai.brightness,
             ai_low_cut=ai.low_cut, ai_limiter=ai.limiter, ai_post_fx=ai.post_fx,
             ai_output_wait_ms=ai.output_wait_ms,ai_crossfade_ms=ai.crossfade_ms,ai_pitch=ai.pitch,
             ai_delivery=ai.delivery,ai_enhancer=ai.enhancer,ai_lavasr_denoise=ai.lavasr_denoise,

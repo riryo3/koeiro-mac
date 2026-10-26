@@ -161,3 +161,50 @@ def test_onset_fade_rounds_the_start_and_leaves_running_sound_alone():
     # A second onset right after only a short pause is not faded (not a fresh start).
     fade.armed = False
     assert abs(float(np.abs(fade.process(np.full((block, 1), 0.3, dtype=np.float32), rate)).max()) - 0.3) < 1e-6
+
+
+def _run_silence_mute(speech, delay, total, stray=()):
+    """Feed a mute whose model delay is `delay`; `stray` input-open spans make no voice (a cough)."""
+    from src.processors.chain import SilenceMute
+    rate, block = 48000, 256
+    mute = SilenceMute()
+    mute.prepare(rate, block)
+    mute.armed = True
+    kept = lost = 0
+    for i in range(int(total * rate / block)):
+        t = i * block / rate
+        mute.input_open = any(a <= t < b for a, b in list(speech) + list(stray))
+        voice = any(a + delay <= t < b + delay for a, b in speech)
+        audio = np.full((block, 1), 0.2 if voice else 0.0, dtype=np.float32)
+        out = mute.process(audio, rate)
+        if voice:
+            if float(np.abs(out).max()) > 0.19:
+                kept += 1
+            else:
+                lost += 1
+    return mute, kept, lost
+
+
+def test_silence_mute_follows_a_short_delay_without_clipping_word_starts():
+    speech = [(1.0, 2.0), (6.0, 7.5), (11.0, 11.8), (15.0, 16.5), (20.0, 21.0)]
+    mute, kept, lost = _run_silence_mute(speech, 1.2, 26.0)
+    assert abs(mute.delay_seconds - 1.2) < 0.2
+    assert lost <= 8 and kept > 0.97 * (kept + lost)
+
+
+def test_silence_mute_ignores_a_stray_input_onset_before_the_word():
+    # A cough 1.6 s before each word must not be paired with the word's output onset.
+    speech = [(3.0, 4.0), (9.0, 10.5), (15.0, 15.8), (21.0, 22.5), (27.0, 28.0)]
+    stray = [(a - 1.6, a - 1.5) for a, _ in speech]
+    mute, kept, lost = _run_silence_mute(speech, 1.2, 33.0, stray)
+    assert abs(mute.delay_seconds - 1.2) < 0.25
+    assert lost <= 8 and kept > 0.97 * (kept + lost)
+
+
+def test_silence_mute_measures_the_delay_again_after_a_restart():
+    from src.processors.chain import SilenceMute
+    mute = SilenceMute()
+    mute.prepare(48000, 256)
+    mute.delay_seconds = 2.5
+    mute.prepare(48000, 256)        # Stop / Start, possibly with another lookahead
+    assert mute.delay_seconds is None

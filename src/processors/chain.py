@@ -52,7 +52,7 @@ class SilenceMute(AudioProcessor):
     With nothing coming in, the model still hallucinates short hiss bursts (3-6 kHz, up to
     -14 dBFS, measured on a recording with the microphone off), and no filter separates
     those from speech. The input gate knows when speech went in, and the voice comes out
-    about 2.4 s later (measured by replaying a recording through the real chain; a 1.5 s
+    about 2.4 s later at the default lookahead (measured by replaying a recording through the real chain; a 1.5 s
     hold muted whole words before they were played). So the output at time t is let through
     when the input was open somewhere in [t - delay - tail, t - delay + lead], and muted
     otherwise. The delay is measured while running: each input onset is paired with the next
@@ -63,7 +63,7 @@ class SilenceMute(AudioProcessor):
 
     DEFAULT_DELAY = 2.4
     MIN_DELAY, MAX_DELAY = 0.8, 3.8
-    LEAD, TAIL = 0.5, 0.9           # seconds around the delayed input that stay open
+    LEAD, TAIL = 0.8, 0.9           # seconds around the delayed input that stay open
     START_HOLD = 4.0                # the rule used before a delay has been measured
     ONSET_DB = -45.0
     PAIRS = 5
@@ -73,7 +73,6 @@ class SilenceMute(AudioProcessor):
         self.enabled = True
         self.armed = False          # set per block by the chain: AI route only
         self.input_open = True      # set per block by the chain: the input gate's state
-        self.delay_seconds = None   # measured model delay; None until the first pair
         self.reset()
 
     def prepare(self, sample_rate, max_frames):
@@ -89,6 +88,8 @@ class SilenceMute(AudioProcessor):
         self._pending_onsets = []   # input onsets (frames) not yet paired with an output onset
         self._quiet_out_frames = 10 ** 9
         self._pairs = []
+        # The delay depends on the lookahead chosen before Start, so a new run measures it again.
+        self.delay_seconds = None   # measured model delay; None until the first pair
 
     # -- delay measurement -------------------------------------------------------------
     def _note_input(self, start, frames, rate):
@@ -109,14 +110,16 @@ class SilenceMute(AudioProcessor):
         level = float(np.sqrt(np.mean(audio * audio))) if frames else 0.0
         loud = level > 10.0 ** (self.ONSET_DB / 20.0)
         if loud and self._quiet_out_frames >= int(0.4 * rate):
-            for onset in self._pending_onsets:
-                seconds = (start - onset) / rate
-                if self.MIN_DELAY <= seconds <= self.MAX_DELAY:
-                    self._pairs.append(seconds)
-                    del self._pairs[:-self.PAIRS]
-                    self.delay_seconds = float(np.median(self._pairs))
-                    self._pending_onsets = [o for o in self._pending_onsets if o > onset]
-                    break
+            # Pair with the newest onset that is at least MIN_DELAY old: a stray earlier onset
+            # (a cough, a breath) would otherwise inflate the delay and mute the start of words.
+            candidates = [o for o in self._pending_onsets
+                          if self.MIN_DELAY <= (start - o) / rate <= self.MAX_DELAY]
+            if candidates:
+                onset = max(candidates)
+                self._pairs.append((start - onset) / rate)
+                del self._pairs[:-self.PAIRS]
+                self.delay_seconds = float(np.median(self._pairs))
+                self._pending_onsets = [o for o in self._pending_onsets if o > onset]
         self._quiet_out_frames = 0 if loud else self._quiet_out_frames + frames
 
     def _allowed(self, start, frames, rate):

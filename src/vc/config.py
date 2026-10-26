@@ -63,6 +63,9 @@ class AIParameters:
     # Phrase-repair lookahead in 160 ms hops (MeanVC2 streaming): 10 is the approved condition,
     # fewer hops cut latency by 160 ms each at some cost to the repair of phrase endings.
     repair_lookahead: int = 10
+    # On a worker failure the streaming route keeps the microphone silent instead of passing the
+    # raw voice through (upstream falls back to the Original). On: nobody hears the unchanged voice.
+    silent_on_error: bool = True
     # Voice tuning sliders. Only the natural comparison route honours them; the
     # shipped routes and the all-in comparison ignore them entirely. Defaults
     # reproduce the validated natural recipe exactly.
@@ -119,7 +122,7 @@ class AIParameters:
         if type(self.brightness) not in (int, float) or not math.isfinite(self.brightness) or not 0 <= self.brightness <= 100:
             raise ValueError('AI brightness must be 0..100')
         if any(type(v) is not bool for v in (self.low_cut, self.limiter, self.post_fx, self.lavasr_denoise,
-                                                 self.tune_combined)):
+                                                 self.tune_combined, self.silent_on_error)):
             raise ValueError('AI FX switches must be boolean')
         for name, low, high in [('tune_sib_db', 0, 6), ('tune_cons_db', 0, 6),
                                 ('tune_caps', 0.5, 1.5), ('tune_floor_db', 0, 6),

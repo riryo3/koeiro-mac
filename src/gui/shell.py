@@ -161,6 +161,48 @@ def draw_cap(painter, rect, pressed=False, dim=False):
     painter.restore()
 
 
+class MiniMeter(QWidget):
+    """A slim vertical dBFS bar for the small window: no scale, no handles, nothing to drag."""
+
+    FLOOR_DB = -60.0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._db = self.FLOOR_DB
+        self._peak = self.FLOOR_DB
+        self.setFixedWidth(8)   # thin on purpose: the small window has no room to spare
+        self.setMinimumHeight(40)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+
+    def set_level(self, amplitude):
+        """Feed a linear amplitude (0..1); the peak line falls about 24 dB per second at 30 Hz."""
+        import math
+        db = 20.0*math.log10(max(float(amplitude), 1e-6))
+        self._db = max(self.FLOOR_DB, min(0.0, db))
+        self._peak = max(self._db, self._peak - 0.8)
+        self.update()
+
+    ZONES = ((-60.0, -18.0, '#2e9e6b'), (-18.0, -6.0, '#e0a800'), (-6.0, 0.0, '#d32f2f'))   # same limits as the full meters
+
+    def paintEvent(self, event: QPaintEvent):
+        painter = QPainter(self)
+        rect = self.rect()
+
+        def y_of(db):
+            return rect.bottom() - int(rect.height()*(db - self.FLOOR_DB)/(-self.FLOOR_DB))
+        # The three zones are always visible, dim; the part that has been reached is drawn solid over them.
+        for low, high, colour in self.ZONES:
+            top, bottom = y_of(high), y_of(low)
+            dim = QColor(colour)
+            dim.setAlpha(70)
+            painter.fillRect(rect.left(), top, rect.width(), bottom - top + 1, dim)
+            if self._db > low:
+                reached = y_of(min(high, self._db))
+                painter.fillRect(rect.left(), reached, rect.width(), bottom - reached + 1, QColor(colour))
+        if self._peak > self.FLOOR_DB + 1:
+            painter.fillRect(rect.left(), y_of(self._peak), rect.width(), 1, QColor('#1a1a1a'))
+
+
 class MeterStrip(QWidget):
     """Vertical dB peak meters (input and output) with a scale and peak hold.
 

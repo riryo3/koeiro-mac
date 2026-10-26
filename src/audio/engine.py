@@ -266,6 +266,10 @@ class AudioEngine:
             self.input_peak = peak_level(audio)
             if self._rec is not None:
                 self._rec[0].append(audio[:, 0].copy())
+            if self.muted:
+                # Mute cuts the input too (the meter above still shows the microphone): the AI answers about
+                # a second or two late, so speech during the mute would otherwise come out after it is lifted.
+                audio.fill(0.0)
             if self.translate_tap.active:
                 self.translate_tap.offer(audio)
             audio = self.chain.process(audio, self.config.sample_rate)
