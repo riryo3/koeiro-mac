@@ -4980,6 +4980,13 @@ class MainWindow(QMainWindow):
         output_device = self.output_device.currentData()
         if self._pending or self.voice_dialog is not None or not input_device or not output_device:
             return
+        if input_device.name == output_device.name and is_virtual(input_device, 'input') and is_virtual(output_device, 'output'):
+            # Both ends on the same software cable (e.g. BlackHole 2ch in and out): the voice would feed itself.
+            QMessageBox.warning(self, 'Koeiro', f'マイク入力と出力先が、どちらも「{input_device.name}」です。\n'
+                                '声が輪になって、話し続けてしまいます。\n\n'
+                                'マイク入力を、実際のマイク（MacBook のマイクなど）に変えてください。')
+            self.status.setText('マイク入力が仮想デバイスのままです')
+            return
         self._capture_settings()
         self._save_settings()
         self._pending = True

@@ -93,6 +93,11 @@ def choose_device(devices, kind, saved=None, preferred_api=None):
         if virtual:
             preferred = [d for d in virtual if "wasapi" in d.host_api.lower()] or virtual
             return next((d for d in preferred if d.default_output), preferred[0])
+    if kind == "input":
+        # A microphone, never a software cable: with BlackHole set as the system input, taking the
+        # default would read Koeiro's own output back in and the voice would loop forever.
+        real = [d for d in pool if not is_virtual(d, "input")]
+        pool = real or pool
     wasapi = [d for d in pool if "wasapi" in d.host_api.lower()]
     pool = wasapi or pool
     return next((d for d in pool if getattr(d, f"default_{kind}")), pool[0] if pool else None)
