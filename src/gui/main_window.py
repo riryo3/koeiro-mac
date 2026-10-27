@@ -335,6 +335,10 @@ class MainWindow(QMainWindow):
         self.band_label.setObjectName('muted')
         self.band_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.band_label.setFixedWidth(self.BAND_WIDTH)
+        # The bar sits at BAR_X inside its widget (not in the middle of it), and the label row
+        # starts 2 px left of the widget: pull the text onto the bar's centre line.
+        from .shell import BandMeter as _Band
+        self.band_label.setContentsMargins(0, 0, self.BAND_WIDTH - 2*(_Band.BAR_X + _Band.BAR_W//2 + 2), 0)
         readouts.addWidget(self.band_label)
         self.gain_fader_label.setObjectName('muted')
         self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
