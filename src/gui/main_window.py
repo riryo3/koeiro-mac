@@ -423,6 +423,17 @@ class MainWindow(QMainWindow):
         self.compact_mute.setStyleSheet('font-size: 17px; font-weight: 700;')
         self.compact_mute.setToolTip('出力とモニターの音を、すぐに消します（Space / M）。もう一度押すと、戻ります。')
         side_column.addWidget(self.compact_mute, 1)
+        # While stopped there is nothing to mute: the same big spot becomes 開始 (blue, like
+        # Start in the full window). Stop stays out of this window on purpose.
+        self.compact_start = QPushButton('開始')
+        self.compact_start.setObjectName('start')
+        self.compact_start.setMinimumHeight(60)
+        self.compact_start.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.compact_start.setStyleSheet('font-size: 17px; font-weight: 700; padding: 6px 4px;')
+        self.compact_start.setToolTip('変換を開始します。')
+        self.compact_start.clicked.connect(self._start)
+        self.compact_start.setVisible(False)
+        side_column.addWidget(self.compact_start, 1)
         # The small buttons: one rounded group, equal widths, thin dividers; only the two ends are round.
         group = QFrame()
         group.setObjectName('compactGroup')
@@ -1549,6 +1560,18 @@ class MainWindow(QMainWindow):
             if available:   # between the two (starting / stopping) the label stays as it was
                 toggle.setText('Stop' if stopping else 'Start')
             toggle.setEnabled(available)
+        state = self.controller.snapshot.state
+        running = self.stop_button.isEnabled()
+        if running:
+            self.compact_start.setVisible(False)
+            self.compact_mute.setVisible(True)
+        else:
+            self.compact_mute.setVisible(False)
+            self.compact_start.setVisible(True)
+            self.compact_start.setEnabled(self.start_button.isEnabled())
+            self.compact_start.setText(
+                '開始' if self.start_button.isEnabled() or state in ('Stopped', 'Error')
+                else '停止処理中…' if state == 'Stopping' else '準備中…')
         muted = self.mute_button.isChecked()
         self.compact_mute.blockSignals(True)
         self.compact_mute.setChecked(muted)
