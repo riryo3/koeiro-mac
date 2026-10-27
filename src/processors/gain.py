@@ -11,6 +11,7 @@ class GainProcessor(AudioProcessor):
     def __init__(self, gain_db: float = 0.0):
         self.set_gain(gain_db)
         self._current = self._target
+        self.peak = 0.0   # loudest sample since the GUI last looked (observation only)
 
     def set_gain(self, gain_db: float) -> None:
         if not math.isfinite(gain_db) or not -20 <= gain_db <= 20:
@@ -38,4 +39,13 @@ class GainProcessor(AudioProcessor):
             np.add(ramp, target, out=ramp)
             self._current = float(ramp[-1, 0])
             np.multiply(audio, ramp, out=audio)
+        if len(audio):
+            loudest = max(float(audio.max()), -float(audio.min()))   # reductions only: no allocation here
+            if loudest > self.peak:
+                self.peak = loudest
         return audio
+
+    def take_peak(self):
+        """The loudest sample after the gain since the last call (the GUI's LED reads this)."""
+        peak, self.peak = self.peak, 0.0
+        return peak

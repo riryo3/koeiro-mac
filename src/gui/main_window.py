@@ -101,7 +101,7 @@ class MainWindow(QMainWindow):
         self._pending_request = 0
         self._closing = False
         self._can_close = False
-        self._display_input = self._display_output = 0.0
+        self._display_input = self._display_output = self._display_gain = 0.0
         self._next_performance_update = 0.0
         self._logged_crossfades = 0
         self.voice_dialog = None
@@ -300,8 +300,12 @@ class MainWindow(QMainWindow):
         meter_row.addWidget(self.band_meter)
         from .shell import Fader
         fader_column = QVBoxLayout()
-        fader_column.setContentsMargins(0, 9, 0, 9)   # no side margin: the column is only 6 px wider than the cap
+        # The lamp's top lines up with the top of the level bars (MeterStrip starts them 8 px down).
+        fader_column.setContentsMargins(0, 8, 0, 9)   # no side margin: the column is only 6 px wider than the cap
         fader_column.setSpacing(4)
+        from .shell import GainLed
+        self.gain_led = GainLed()
+        fader_column.addWidget(self.gain_led, 0, Qt.AlignmentFlag.AlignHCenter)
         self.gain_fader = Fader(-300, 120, 0)
         fader_column.addWidget(self.gain_fader, 1, Qt.AlignmentFlag.AlignHCenter)
         fader_box = QWidget()
@@ -5138,6 +5142,9 @@ class MainWindow(QMainWindow):
         # Visual-only decay at 30 Hz; callback just publishes current peaks.
         self._display_input = max(input_peak, self._display_input * 0.8) if snapshot.state == "Running" else 0
         self._display_output = max(output_peak, self._display_output * 0.8) if snapshot.state == "Running" else 0
+        gain_peak = self.controller.engine.chain.gain.take_peak()
+        self._display_gain = max(gain_peak, self._display_gain * 0.9) if snapshot.state == "Running" else 0.0
+        self.gain_led.set_amplitude(self._display_gain)
         self.input_db.setText(f"入力\n{amplitude_to_db(self._display_input):.1f}")
         self.output_db.setText(f"出力\n{amplitude_to_db(self._display_output):.1f}")
         self.input_bar.set_level(self._display_input)

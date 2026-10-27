@@ -2063,6 +2063,54 @@ class StepSlider(QSlider):
         super().mousePressEvent(event)
 
 
+class GainLed(QWidget):
+    """A small lamp above the Gain fader: how loud the signal is after the gain.
+
+    Off while nothing passes, green when it is comfortable, yellow when loud, red when it
+    reaches clipping (like the clip light at the top of a mixer channel).
+    """
+
+    SIZE = 10
+    COLOURS = {'ok': '#2f9e6f', 'loud': '#d9a21b', 'clip': DANGER}
+    TIPS = {
+        'off': 'Gain後の音の大きさ：いまは音が通っていません。',
+        'ok': 'Gain後の音の大きさ：ちょうどよいです。',
+        'loud': 'Gain後の音の大きさ：大きめです。Gain を少し下げると安定します。',
+        'clip': 'Gain後の音が大きすぎます（音割れ）。Gain を下げてください。',
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self._state = 'off'
+        self.setToolTip(self.TIPS['off'])
+
+    @staticmethod
+    def state_for(amplitude):
+        """off / ok / loud / clip for a peak amplitude (1.0 = 0 dBFS)."""
+        if amplitude < 10 ** (-50 / 20):
+            return 'off'
+        if amplitude < 10 ** (-6 / 20):
+            return 'ok'
+        if amplitude < 10 ** (-1 / 20):
+            return 'loud'
+        return 'clip'
+
+    def set_amplitude(self, amplitude):
+        state = self.state_for(amplitude)
+        if state != self._state:
+            self._state = state
+            self.setToolTip(self.TIPS[state])
+            self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(self.COLOURS.get(self._state, GROOVE)))
+        painter.drawEllipse(QRect(0, 0, self.SIZE, self.SIZE))
+
+
 class Fader(StepSlider):
     """A vertical level fader (like a mixer channel); a double click returns to `default`."""
 
