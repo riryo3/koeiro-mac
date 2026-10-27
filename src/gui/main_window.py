@@ -300,8 +300,9 @@ class MainWindow(QMainWindow):
         meter_row.addWidget(self.band_meter)
         from .shell import Fader
         fader_column = QVBoxLayout()
-        # The lamp's top lines up with the top of the level bars (MeterStrip starts them 8 px down).
-        fader_column.setContentsMargins(0, 8, 0, 9)   # no side margin: the column is only 6 px wider than the cap
+        # The lamp's top lines up with the top of the level bars (MeterStrip starts them 8 px down)
+        # and the groove's end with the bars' foot (the groove stops 1 px above the widget's edge).
+        fader_column.setContentsMargins(0, 8, 0, 7)   # no side margin: the column is only 6 px wider than the cap
         fader_column.setSpacing(4)
         from .shell import GainLed
         self.gain_led = GainLed()
@@ -340,10 +341,13 @@ class MainWindow(QMainWindow):
         self.band_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.band_label.setFixedWidth(self.BAND_WIDTH)
         # The bar sits at BAR_X inside its widget (not in the middle of it), and the label row
-        # starts 2 px left of the widget: pull the text onto the bar's centre line.
+        # starts 2 px left of the widget: slide the whole label left onto the bar's centre line
+        # (_fit_meter_width takes the same amount off the spacer before it) and give the room back
+        # after it, so the Gain label stays put and the text keeps its full width.
         from .shell import BandMeter as _Band
-        self.band_label.setContentsMargins(0, 0, self.BAND_WIDTH - 2*(_Band.BAR_X + _Band.BAR_W//2 + 2), 0)
+        self.BAND_SHIFT = self.BAND_WIDTH//2 - (_Band.BAR_X + _Band.BAR_W//2 + 2)
         readouts.addWidget(self.band_label)
+        readouts.addSpacing(self.BAND_SHIFT)
         self.gain_fader_label.setObjectName('muted')
         self.gain_fader_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.gain_fader_label.setFixedWidth(44)
@@ -1497,7 +1501,7 @@ class MainWindow(QMainWindow):
         xs1 = xs0 + bar + scale_gap
         first.changeSize(xs0 + bar//2 - 17, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         second.changeSize(bar + scale_gap - 34, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-        third.changeSize(out_right + out_zone - 8 - (xs1 + bar//2 + 17) + 0, 1,
+        third.changeSize(out_right + out_zone - 8 - (xs1 + bar//2 + 17) - self.BAND_SHIFT, 1,
                          QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         self.meter_strip.layout().invalidate()
 
