@@ -15,7 +15,24 @@ def _reveal(window):
     window.activateWindow()
 
 
+def extend_path_for_macos():
+    """Let an app opened from Finder / the Dock find Homebrew tools such as ffmpeg.
+
+    Such an app starts with only /usr/bin:/bin:/usr/sbin:/sbin on PATH, so a Homebrew
+    ffmpeg (under /opt/homebrew or /usr/local) is invisible to it, and to the processes
+    it starts. The folders are appended, so system tools still come first.
+    """
+    if sys.platform != "darwin":
+        return
+    parts = [part for part in os.environ.get("PATH", "").split(os.pathsep) if part]
+    for extra in ("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"):
+        if os.path.isdir(extra) and extra not in parts:
+            parts.append(extra)
+    os.environ["PATH"] = os.pathsep.join(parts)
+
+
 def main():
+    extend_path_for_macos()
     from src.runtime_paths import data_dir
     from src.version import APP_VERSION
     parser = argparse.ArgumentParser(description=f"Koeiro v{APP_VERSION} human-approved fixed voices (Windows and Linux)")
